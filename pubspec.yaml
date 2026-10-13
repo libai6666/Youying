@@ -1,0 +1,26 @@
+name: youying
+description: Youying, an independent Flutter media client with user-configured HTTPS sources.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.4.0
+  crypto: ^3.0.7
+  shared_preferences: ^2.5.3
+  path_provider: ^2.1.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  shared_preferences_platform_interface: ^2.4.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo.png

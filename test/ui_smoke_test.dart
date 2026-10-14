@@ -7,25 +7,33 @@ import 'package:youying/main.dart';
 
 final class _UnusedPreferencesBackend extends SharedPreferencesAsyncPlatform {
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      throw StateError('No persistence should be used by the initial-view test');
+  dynamic noSuchMethod(Invocation invocation) => throw StateError(
+      'No persistence should be used by the initial-view test');
 }
 
 void main() {
-  setUp(() => SharedPreferencesAsyncPlatform.instance = _UnusedPreferencesBackend());
+  setUp(() =>
+      SharedPreferencesAsyncPlatform.instance = _UnusedPreferencesBackend());
 
-  testWidgets('initial view discloses unknown sources and makes no automatic search', (tester) async {
+  testWidgets('three tab shell shows source setup when no source is enabled',
+      (tester) async {
     final library = Library(SharedPreferencesAsync());
     await tester.pumpWidget(MaterialApp(home: HomePage(library: library)));
-    expect(find.text('恢复状态：部分'), findsOneWidget);
+    expect(find.byType(BottomNavigationBar), findsOneWidget);
+    expect(find.text('没有启用的内容源'), findsOneWidget);
     expect(library.sources, isEmpty);
-    expect(find.text('手动播放直链'), findsOneWidget);
+    expect(find.text('排行榜'), findsOneWidget);
+    expect(find.text('我的'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('source configuration dialog can be cancelled without changing state', (tester) async {
+  testWidgets(
+      'source configuration dialog can be cancelled without changing state',
+      (tester) async {
     final library = Library(SharedPreferencesAsync());
     await tester.pumpWidget(MaterialApp(home: HomePage(library: library)));
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('设置'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('添加源'));

@@ -1,14 +1,20 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet('menu','doctor','check','debug','test','release','git')][string]$Action = 'menu',
+    [ValidateSet('menu','doctor','check','debug','test','release','git','signing','version')][string]$Action = 'menu',
     [string]$Device,
     [ValidateSet('android-arm64','android-arm','android-x64','android-arm,android-arm64,android-x64')]
     [string]$TargetPlatform = 'android-arm,android-arm64,android-x64',
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+    [string]$Version,
+    [ValidateRange(1,2100000000)][long]$BuildNumber,
+    [switch]$BumpBuild,
+    [switch]$ShowVersion
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $Root = Split-Path $PSScriptRoot -Parent
+$localEnvironment = Join-Path $Root '.local/toolchain.ps1'
+if (Test-Path -LiteralPath $localEnvironment -PathType Leaf) { . $localEnvironment }
 
 function Invoke-Tool([string]$Name, [string[]]$Arguments) {
     $command = Get-Command $Name -ErrorAction Stop
@@ -33,9 +39,33 @@ function Find-Adb {
 
 function Request-Secret([string]$Prompt) {
     $secure = Read-Host $Prompt -AsSecureString
-    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try { return ConvertTo-PlainText $secure }
+    finally { $secure.Dispose() }
+}
+
+function ConvertTo-PlainText([Security.SecureString]$Secure) {
+    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
     try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
-    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer); $secure.Dispose() }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+}
+
+function Import-LocalSigning {
+    foreach ($key in @('YOUYING_KEYSTORE','YOUYING_KEY_ALIAS','YOUYING_STORE_PASSWORD','YOUYING_KEY_PASSWORD')) {
+        if ([Environment]::GetEnvironmentVariable($key,'Process')) { return }
+    }
+    $configuration = Join-Path $HOME 'AndroidKeys/youying/signing.clixml'
+    if (-not (Test-Path -LiteralPath $configuration -PathType Leaf)) { return }
+    try {
+        $signing = Import-Clixml -LiteralPath $configuration
+        if ($signing.StorePassword -isnot [Security.SecureString] -or $signing.KeyPassword -isnot [Security.SecureString]) {
+            throw 'Invalid encrypted signing configuration'
+        }
+        $env:YOUYING_KEYSTORE = $signing.StoreFile
+        $env:YOUYING_KEY_ALIAS = $signing.KeyAlias
+        $env:YOUYING_STORE_PASSWORD = ConvertTo-PlainText $signing.StorePassword
+        $env:YOUYING_KEY_PASSWORD = ConvertTo-PlainText $signing.KeyPassword
+    }
+    catch { throw 'Cannot unlock local signing configuration. Use the original Windows account, or restore the key and passwords from your offline backup.' }
 }
 
 function Find-ApkSigner {
@@ -64,6 +94,7 @@ function Build-Release {
     $saved = @{}
     foreach ($key in $keys) { $saved[$key] = [Environment]::GetEnvironmentVariable($key,'Process') }
     try {
+        Import-LocalSigning
         foreach ($key in $keys) {
             if ([Environment]::GetEnvironmentVariable($key,'Process')) { continue }
             if ($NonInteractive) { throw "Release signing is missing $key" }
@@ -73,6 +104,9 @@ function Build-Release {
         }
         if (-not (Test-Path -LiteralPath $env:YOUYING_KEYSTORE -PathType Leaf)) { throw 'Keystore not found' }
         $env:YOUYING_KEYSTORE = (Resolve-Path -LiteralPath $env:YOUYING_KEYSTORE).Path
+        Invoke-Tool 'flutter' @('pub','get')
+        Invoke-Tool 'flutter' @('analyze')
+        Invoke-Tool 'flutter' @('test')
         Invoke-Tool 'flutter' @('build','apk','--release','--target-platform',$TargetPlatform)
     }
     finally {
@@ -83,7 +117,7 @@ function Build-Release {
 function Copy-Apk([string]$Mode, [string]$Kind) {
     $apk = Join-Path $Root "build/app/outputs/flutter-apk/app-$Mode.apk"
     if (-not (Test-Path -LiteralPath $apk -PathType Leaf)) { throw 'APK was not produced' }
-    if ($Kind -eq 'release') { Invoke-Tool (Find-ApkSigner) @('verify','--verbose',$apk) }
+    if ($Kind -eq 'release') { Invoke-Tool (Find-ApkSigner) @('verify','--verbose','--print-certs',$apk) }
     $directory = Join-Path $Root "dist/$Kind"
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
     $destination = Join-Path $directory ("youying-$Kind-" + (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '.apk')
@@ -97,12 +131,15 @@ Push-Location $Root
 try {
     if ($Action -eq 'menu') {
         Write-Host 'Youying / 柚影'
-        Write-Host '1 环境检查  2 分析与测试  3 USB 手机调试  4 测试包  5 正式签名包  6 Git 初始化/状态  0 退出'
-        $choices = @{'1'='doctor';'2'='check';'3'='debug';'4'='test';'5'='release';'6'='git';'0'='exit'}
+        Write-Host '1 环境检查  2 分析与测试  3 USB 手机调试  4 测试包  5 正式签名包  6 Git 初始化/状态  7 初始化正式签名  8 查看/修改版本号  0 退出'
+        $choices = @{'1'='doctor';'2'='check';'3'='debug';'4'='test';'5'='release';'6'='git';'7'='signing';'8'='version';'0'='exit'}
         $answer = Read-Host '请选择'
         if (-not $choices.ContainsKey($answer)) { throw 'Invalid menu selection' }
         if ($choices[$answer] -eq 'exit') { exit 0 }
         $Action = $choices[$answer]
+    }
+    if ($Action -ne 'version' -and ($PSBoundParameters.ContainsKey('Version') -or $PSBoundParameters.ContainsKey('BuildNumber') -or $BumpBuild -or $ShowVersion)) {
+        throw 'Version options require -Action version. Update the version before building an APK.'
     }
     switch ($Action) {
         'doctor' { Invoke-Tool 'flutter' @('doctor','-v'); $adb = Find-Adb; Invoke-Tool $adb @('devices','-l') }
@@ -128,16 +165,16 @@ try {
             Copy-Apk 'debug' 'test'
         }
         'release' {
-            if ($NonInteractive) {
-                foreach ($key in @('YOUYING_KEYSTORE','YOUYING_KEY_ALIAS','YOUYING_STORE_PASSWORD','YOUYING_KEY_PASSWORD')) {
-                    if (-not [Environment]::GetEnvironmentVariable($key,'Process')) { throw "Release signing is missing $key" }
-                }
-            }
-            Invoke-Tool 'flutter' @('pub','get')
-            Invoke-Tool 'flutter' @('analyze')
-            Invoke-Tool 'flutter' @('test')
             Build-Release
             Copy-Apk 'release' 'release'
+        }
+        'signing' { & (Join-Path $PSScriptRoot 'init-signing.ps1') }
+        'version' {
+            $arguments = @{}
+            foreach ($key in @('Version','BuildNumber','BumpBuild','ShowVersion','NonInteractive')) {
+                if ($PSBoundParameters.ContainsKey($key)) { $arguments[$key] = $PSBoundParameters[$key] }
+            }
+            & (Join-Path $PSScriptRoot 'set-version.ps1') @arguments
         }
         'git' {
             if (-not (Test-Path -LiteralPath (Join-Path $Root '.git'))) { Invoke-Tool 'git' @('init','--initial-branch=main') }

@@ -48,6 +48,9 @@ android/local.properties
 android/.gradle/
 android/.cxx/
 /coverage/
+/.local/
+**/signing.clixml
+**/RECOVERY-PRIVATE.txt
 
 # Symbolication related
 app.*.symbols

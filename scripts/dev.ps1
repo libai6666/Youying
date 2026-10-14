@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet('menu','doctor','check','debug','test','release','git','signing','version')][string]$Action = 'menu',
+    [ValidateSet('menu','doctor','check','debug','test','release','git','signing','version','github-signing')][string]$Action = 'menu',
     [string]$Device,
     [ValidateSet('android-arm64','android-arm','android-x64','android-arm,android-arm64,android-x64')]
     [string]$TargetPlatform = 'android-arm,android-arm64,android-x64',
@@ -131,8 +131,8 @@ Push-Location $Root
 try {
     if ($Action -eq 'menu') {
         Write-Host 'Youying / 柚影'
-        Write-Host '1 环境检查  2 分析与测试  3 USB 手机调试  4 测试包  5 正式签名包  6 Git 初始化/状态  7 初始化正式签名  8 查看/修改版本号  0 退出'
-        $choices = @{'1'='doctor';'2'='check';'3'='debug';'4'='test';'5'='release';'6'='git';'7'='signing';'8'='version';'0'='exit'}
+        Write-Host '1 环境检查  2 分析与测试  3 USB 手机调试  4 测试包  5 正式签名包  6 Git 初始化/状态  7 初始化正式签名  8 查看/修改版本号  9 配置 GitHub 签名 Secrets  0 退出'
+        $choices = @{'1'='doctor';'2'='check';'3'='debug';'4'='test';'5'='release';'6'='git';'7'='signing';'8'='version';'9'='github-signing';'0'='exit'}
         $answer = Read-Host '请选择'
         if (-not $choices.ContainsKey($answer)) { throw 'Invalid menu selection' }
         if ($choices[$answer] -eq 'exit') { exit 0 }
@@ -169,6 +169,10 @@ try {
             Copy-Apk 'release' 'release'
         }
         'signing' { & (Join-Path $PSScriptRoot 'init-signing.ps1') }
+        'github-signing' {
+            if ($NonInteractive) { throw 'GitHub signing setup requires an interactive Windows session.' }
+            & (Join-Path $PSScriptRoot 'copy-github-signing.ps1')
+        }
         'version' {
             $arguments = @{}
             foreach ($key in @('Version','BuildNumber','BumpBuild','ShowVersion','NonInteractive')) {

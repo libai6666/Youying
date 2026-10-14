@@ -29,6 +29,7 @@ Build-Tools、Platform-Tools、NDK **28.2.13676358**、Git。先安装并加入 
 .\dev.cmd -Action test            # debug 签名通用测试 APK
 .\dev.cmd -Action release         # 自己的签名密钥，分析/测试后构建
 .\dev.cmd -Action signing         # 仅首次初始化；已有长期密钥不会覆盖
+.\dev.cmd -Action github-signing  # 引导复制四项 GitHub Actions 签名 Secrets，不上传、不显示值
 .\dev.cmd -Action version -ShowVersion        # 只查看版本，不修改
 .\dev.cmd -Action version -BumpBuild          # 保留版本名，构建号加 1
 .\dev.cmd -Action version -Version 0.2.0      # 设置版本名，构建号自动加 1
@@ -49,6 +50,10 @@ Build-Tools、Platform-Tools、NDK **28.2.13676358**、Git。先安装并加入 
 
 ## 文档
 
+GitHub 云端正式包：先按[配置说明](prd/09-github-actions.md)保存四项仓库 Secrets，
+再到 Actions 手动运行 **Android 正式 APK**，成功后下载 Artifacts 中的 APK 与 SHA-256。
+流程只允许私有仓库的默认分支，不自动发布 Release，不使用本机代理或 Windows DPAPI 文件。
+
 - [项目状态、功能边界及产品约定](prd/01-product-status.md)
 - [手机 USB 调试与故障排查](prd/02-usb-debug.md)
 - [测试包、正式签名与发布清单](prd/03-build-signing.md)
@@ -57,6 +62,7 @@ Build-Tools、Platform-Tools、NDK **28.2.13676358**、Git。先安装并加入 
 - [多源预设、抽查结果与原应用界面差异](prd/06-source-presets-and-ui-gap.md)
 - [三栏页面对齐、数据来源与验收边界](prd/07-ui-alignment.md)
 - [新增五源、清理失效预设及升级验证](prd/08-public-sources-v2.md)
+- [GitHub Actions 云端正式打包](prd/09-github-actions.md)
 
 `lib/` 是 Dart 代码，`android/` 是 Android/Media3 桥接，`test/` 是自动化测试，
 `prd/` 是项目文档，`scripts/` 是本机工作流。

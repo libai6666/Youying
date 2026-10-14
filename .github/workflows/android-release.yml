@@ -1,0 +1,152 @@
+name: Android 正式 APK
+run-name: 正式 APK · ${{ inputs.architecture }} · ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: APK 架构（universal 兼容更多手机，arm64 适合新手机）
+        type: choice
+        required: true
+        default: universal
+        options:
+          - universal
+          - arm64
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: 检查仓库和签名配置
+        env:
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SIGNING_CONFIGURED: ${{ secrets.YOUYING_KEYSTORE_BASE64 != '' && secrets.YOUYING_KEY_ALIAS != '' && secrets.YOUYING_STORE_PASSWORD != '' && secrets.YOUYING_KEY_PASSWORD != '' }}
+        run: |
+          if ($env:REPOSITORY_PRIVATE -ne 'true') {
+              throw 'This workflow only distributes signed APKs from private repositories. See prd/09-github-actions.md.'
+          }
+          if ($env:GITHUB_REF -ne "refs/heads/$env:DEFAULT_BRANCH") {
+              throw 'Select the default branch when running the release workflow.'
+          }
+          if ($env:SIGNING_CONFIGURED -ne 'true') {
+              throw 'Configure the four YOUYING signing repository secrets first. See prd/09-github-actions.md.'
+          }
+
+      - name: 检出代码
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: 安装 JDK 17 并缓存 Gradle 依赖
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            android/**/*.gradle.kts
+            android/gradle.properties
+            android/gradle/wrapper/gradle-wrapper.properties
+            pubspec.lock
+
+      - name: 安装 Flutter 3.47.7
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.7'
+          channel: stable
+          cache: true
+
+      - name: 安装 Android SDK 并接受许可证
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;28.2.13676358'
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
+
+      - name: 限制云端内存和并发
+        run: |
+          & chmod +x android/gradlew
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot make Gradle wrapper executable.' }
+          $directory = Join-Path $HOME '.gradle'
+          New-Item -ItemType Directory -Force -Path $directory | Out-Null
+          @'
+          org.gradle.jvmargs=-Xmx3G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m -Dfile.encoding=UTF-8
+          org.gradle.workers.max=2
+          org.gradle.parallel=false
+          org.gradle.configuration-cache=false
+          org.gradle.daemon=false
+          kotlin.compiler.execution.strategy=in-process
+          '@ | Set-Content -LiteralPath (Join-Path $directory 'gradle.properties') -Encoding utf8
+
+      - name: 检查、测试、正式构建和 APK 验签
+        env:
+          APK_ARCH: ${{ inputs.architecture }}
+          YOUYING_KEYSTORE_BASE64: ${{ secrets.YOUYING_KEYSTORE_BASE64 }}
+          YOUYING_KEY_ALIAS: ${{ secrets.YOUYING_KEY_ALIAS }}
+          YOUYING_STORE_PASSWORD: ${{ secrets.YOUYING_STORE_PASSWORD }}
+          YOUYING_KEY_PASSWORD: ${{ secrets.YOUYING_KEY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = Join-Path $env:RUNNER_TEMP 'youying-signing'
+          $secretNames = @('YOUYING_KEYSTORE_BASE64','YOUYING_KEY_ALIAS','YOUYING_STORE_PASSWORD','YOUYING_KEY_PASSWORD')
+          try {
+              foreach ($name in $secretNames) {
+                  if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name,'Process'))) {
+                      throw "Missing repository secret: $name"
+                  }
+              }
+              New-Item -ItemType Directory -Force -Path $directory | Out-Null
+              & chmod 700 $directory
+              if ($LASTEXITCODE -ne 0) { throw 'Cannot protect signing directory.' }
+              $env:YOUYING_KEYSTORE = Join-Path $directory 'youying-release.jks'
+              $bytes = [Convert]::FromBase64String($env:YOUYING_KEYSTORE_BASE64)
+              try { [IO.File]::WriteAllBytes($env:YOUYING_KEYSTORE,$bytes) }
+              finally { [Array]::Clear($bytes,0,$bytes.Length) }
+              Remove-Item Env:YOUYING_KEYSTORE_BASE64
+              & chmod 600 $env:YOUYING_KEYSTORE
+              if ($LASTEXITCODE -ne 0) { throw 'Cannot protect keystore.' }
+              $platform = if ($env:APK_ARCH -eq 'arm64') { 'android-arm64' } else { 'android-arm,android-arm64,android-x64' }
+              & ./scripts/dev.ps1 -Action release -TargetPlatform $platform -NonInteractive
+              if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
+              $checksums = Get-ChildItem -LiteralPath 'dist/release' -Filter '*.apk' | ForEach-Object {
+                  (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $_.Name
+              }
+              if (-not $checksums) { throw 'No verified release APK found.' }
+              $checksums | Set-Content -LiteralPath 'dist/release/SHA256SUMS.txt' -Encoding ascii
+              "Source commit: $env:GITHUB_SHA`n`n$($checksums -join "`n")" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          }
+          finally {
+              if (Test-Path -LiteralPath $directory) { Remove-Item -LiteralPath $directory -Recurse -Force }
+              foreach ($name in ($secretNames + 'YOUYING_KEYSTORE')) {
+                  [Environment]::SetEnvironmentVariable($name,$null,'Process')
+              }
+          }
+
+      - name: 清理临时签名目录
+        if: always()
+        run: |
+          $directory = Join-Path $env:RUNNER_TEMP 'youying-signing'
+          if (Test-Path -LiteralPath $directory) { Remove-Item -LiteralPath $directory -Recurse -Force }
+
+      - name: 保存正式 APK 和 SHA-256（7 天）
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: youying-release-${{ inputs.architecture }}-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            dist/release/*.apk
+            dist/release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

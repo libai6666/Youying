@@ -68,6 +68,24 @@ void main() {
     }
   });
 
+  test('favorites and history remain one work across source variants',
+      () async {
+    final library = await Library.open();
+    const a = MediaEntry(
+        id: 'A:1', title: '同一作品', source: 'A', year: '2026', category: '国产剧');
+    const b = MediaEntry(
+        id: 'B:90', title: '同一作品', source: 'B', year: '2026', category: '电视剧');
+    await library.toggleFavorite(a);
+    expect(library.isFavorite(b), true);
+    expect((await Library.open()).isFavorite(b), true);
+    await library.toggleFavorite(b);
+    expect(library.favorites, isEmpty);
+    await library.recordPlay(a);
+    await library.recordPlay(b);
+    expect(library.recentEntries.map((e) => e.id), ['B:90']);
+    expect(library.history['A:1'], a);
+  });
+
   test(
       'migration preserves custom source names URLs disabled state and library data',
       () async {
@@ -303,6 +321,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(requested, ['bad.example', 'good.example']);
     expect(find.text('Found'), findsOneWidget);
+    expect(find.text('bad：请求失败或返回格式不兼容'), findsNothing);
+    await tester.tap(find.text('来源状态'));
+    await tester.pumpAndSettle();
     expect(find.text('bad：请求失败或返回格式不兼容'), findsOneWidget);
     expect(find.text('good：1 条'), findsOneWidget);
   });

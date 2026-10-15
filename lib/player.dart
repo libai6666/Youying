@@ -66,10 +66,16 @@ class PlayerPage extends StatefulWidget {
       required this.entry,
       required this.library,
       this.initial,
+      this.initialPositionMs,
+      this.embedded = false,
+      this.onPlaybackChanged,
       this.headers = const {}});
   final MediaEntry entry;
   final Library library;
   final Episode? initial;
+  final int? initialPositionMs;
+  final bool embedded;
+  final void Function(Episode episode, int positionMs)? onPlaybackChanged;
   final Map<String, String> headers;
 
   @override
@@ -120,7 +126,7 @@ class _PlayerPageState extends State<PlayerPage> {
       }
       subscription = controller.listen().listen(_event);
       setState(() => ready = true);
-      await _select(episode);
+      await _select(episode, startMs: widget.initialPositionMs);
     } catch (_) {
       if (mounted) setState(() => error = '无法初始化 Android 播放器');
     }
@@ -144,6 +150,7 @@ class _PlayerPageState extends State<PlayerPage> {
           error = '播放失败，请检查地址、格式和网络';
       }
     });
+    if (episode != null) widget.onPlaybackChanged?.call(episode!, positionMs);
   }
 
   Future<void> _select(Episode? next,
@@ -170,6 +177,7 @@ class _PlayerPageState extends State<PlayerPage> {
       positionMs = 0;
       durationMs = 0;
     });
+    widget.onPlaybackChanged?.call(next, startMs ?? 0);
     try {
       if (local) {
         final path = widget.library.downloadedFile(widget.entry.id, next);
@@ -248,123 +256,133 @@ class _PlayerPageState extends State<PlayerPage> {
   @override
   Widget build(BuildContext context) {
     final lines = widget.entry.lines;
-    return Scaffold(
-      appBar: AppBar(title: Text(widget.entry.title, maxLines: 1)),
-      body: ListView(padding: const EdgeInsets.all(16), children: [
-        AspectRatio(
-          aspectRatio: 16 / 9,
-          child: ColoredBox(
-            color: Colors.black,
-            child: ready
-                ? controller.videoView()
-                : const Center(
-                    child: CircularProgressIndicator(),
-                  ),
-          ),
+    final content = <Widget>[
+      AspectRatio(
+        aspectRatio: 16 / 9,
+        child: ColoredBox(
+          color: Colors.black,
+          child: ready
+              ? controller.videoView()
+              : Center(
+                  child: error == null
+                      ? const CircularProgressIndicator()
+                      : const Icon(Icons.play_circle_outline,
+                          color: Colors.white54, size: 48)),
         ),
-        if (error != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Text(error!, style: const TextStyle(color: Colors.red)),
-          ),
-        if (loading) const LinearProgressIndicator(),
-        Row(children: [
-          IconButton(
-            tooltip: playing ? '暂停' : '播放',
-            onPressed: !ready
-                ? null
-                : () => playing ? controller.pause() : controller.play(),
-            icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-          ),
-          Expanded(
-              child: Slider(
-            value:
-                positionMs.clamp(0, durationMs > 0 ? durationMs : 1).toDouble(),
-            max: (durationMs > 0 ? durationMs : 1).toDouble(),
-            onChanged: durationMs == 0 || !ready
-                ? null
-                : (value) => setState(() => positionMs = value.toInt()),
-            onChangeEnd: durationMs == 0
-                ? null
-                : (value) => controller.seek(value.toInt()),
-          )),
-          Text('${_time(positionMs)} / ${_time(durationMs)}'),
-          PopupMenuButton<double>(
-            tooltip: '倍速',
-            initialValue: rate,
-            onSelected: ready
-                ? (value) {
-                    setState(() => rate = value);
-                    controller.setRate(value);
-                  }
-                : null,
-            itemBuilder: (_) => [1.0, 1.25, 1.5, 2.0]
-                .map((value) =>
-                    PopupMenuItem(value: value, child: Text('${value}x')))
-                .toList(),
-            child: Padding(
-                padding: const EdgeInsets.all(8), child: Text('${rate}x')),
-          ),
-        ]),
-        const SizedBox(height: 16),
-        Wrap(spacing: 8, children: [
-          for (final item in lines.keys)
-            ChoiceChip(
-                label: Text(item),
-                selected: line == item,
-                onSelected: !ready || selecting
-                    ? null
-                    : (_) {
-                        final target = Episode.onLine(
-                            lines[item] ?? [], episode, lines[line] ?? []);
-                        if (target == null || line == item) return;
-                        final previous = lines[line] ?? [];
-                        final index = previous
-                            .indexWhere((item) => item.url == episode?.url);
-                        final matches = target.name.trim() ==
-                                episode?.name.trim() ||
-                            (index >= 0 && index < (lines[item]?.length ?? 0));
-                        final position = matches ? positionMs : 0;
-                        setState(() => line = item);
-                        _select(target, startMs: position);
-                      }),
-        ]),
-        if (line != null) ...[
-          const SizedBox(height: 12),
-          Wrap(spacing: 8, runSpacing: 6, children: [
-            for (final item in lines[line] ?? const <Episode>[])
-              OutlinedButton(
-                onPressed: ready && !selecting ? () => _select(item) : null,
-                child: Text(item.name),
-              ),
-          ]),
-        ],
-        Row(children: [
-          TextButton.icon(
-            onPressed: downloading || episode == null ? null : _download,
-            icon: const Icon(Icons.download_outlined),
-            label: Text(downloading
-                ? '下载 ${(downloadedBytes / 1048576).toStringAsFixed(1)} MB'
-                : '下载本集'),
-          ),
-          if (episode != null &&
-              widget.library.downloadedFile(widget.entry.id, episode!) != null)
-            TextButton.icon(
-              onPressed: ready ? () => _select(episode, local: true) : null,
-              icon: const Icon(Icons.offline_pin_outlined),
-              label: const Text('播放已下载文件'),
+      ),
+      if (error != null)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Text(error!, style: const TextStyle(color: Colors.red)),
+        ),
+      if (loading) const LinearProgressIndicator(),
+      Slider(
+        value: positionMs.clamp(0, durationMs > 0 ? durationMs : 1).toDouble(),
+        max: (durationMs > 0 ? durationMs : 1).toDouble(),
+        onChanged: durationMs == 0 || !ready
+            ? null
+            : (value) => setState(() => positionMs = value.toInt()),
+        onChangeEnd: durationMs == 0 || !ready
+            ? null
+            : (value) => controller.seek(value.toInt()),
+      ),
+      Row(children: [
+        IconButton(
+          tooltip: playing ? '暂停' : '播放',
+          onPressed: !ready
+              ? null
+              : () => playing ? controller.pause() : controller.play(),
+          icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+        ),
+        Expanded(
+            child: Text('${_time(positionMs)} / ${_time(durationMs)}',
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12))),
+        PopupMenuButton<double>(
+          tooltip: '倍速',
+          initialValue: rate,
+          onSelected: ready
+              ? (value) {
+                  setState(() => rate = value);
+                  controller.setRate(value);
+                }
+              : null,
+          itemBuilder: (_) => [1.0, 1.25, 1.5, 2.0]
+              .map((value) =>
+                  PopupMenuItem(value: value, child: Text('${value}x')))
+              .toList(),
+          child: Padding(
+              padding: const EdgeInsets.all(8), child: Text('${rate}x')),
+        ),
+      ]),
+      const SizedBox(height: 16),
+      Wrap(spacing: 8, children: [
+        for (final item in lines.keys)
+          ChoiceChip(
+              label: Text(item),
+              selected: line == item,
+              onSelected: selecting
+                  ? null
+                  : (_) {
+                      final target = Episode.onLine(
+                          lines[item] ?? [], episode, lines[line] ?? []);
+                      if (target == null || line == item) return;
+                      final matches =
+                          target.name.trim() == episode?.name.trim() ||
+                              (Episode.ordinal(target.name) != null &&
+                                  Episode.ordinal(target.name) ==
+                                      Episode.ordinal(episode?.name ?? ''));
+                      final position = matches ? positionMs : 0;
+                      setState(() {
+                        line = item;
+                        if (!ready) episode = target;
+                      });
+                      if (ready) _select(target, startMs: position);
+                    }),
+      ]),
+      if (line != null) ...[
+        const SizedBox(height: 12),
+        Wrap(spacing: 8, runSpacing: 6, children: [
+          for (final item in lines[line] ?? const <Episode>[])
+            OutlinedButton(
+              onPressed: ready && !selecting ? () => _select(item) : null,
+              child: Text(item.name),
             ),
         ]),
-        if (downloading)
-          LinearProgressIndicator(
-              value: downloadTotal == null || downloadTotal == 0
-                  ? null
-                  : (downloadedBytes / downloadTotal!).clamp(0.0, 1.0)),
-        const Divider(),
+      ],
+      Wrap(children: [
+        TextButton.icon(
+          onPressed: downloading || episode == null ? null : _download,
+          icon: const Icon(Icons.download_outlined),
+          label: Text(downloading
+              ? '下载 ${(downloadedBytes / 1048576).toStringAsFixed(1)} MB'
+              : '下载本集'),
+        ),
+        if (episode != null &&
+            widget.library.downloadedFile(widget.entry.id, episode!) != null)
+          TextButton.icon(
+            onPressed: ready ? () => _select(episode, local: true) : null,
+            icon: const Icon(Icons.offline_pin_outlined),
+            label: const Text('播放已下载文件'),
+          ),
+      ]),
+      if (downloading)
+        LinearProgressIndicator(
+            value: downloadTotal == null || downloadTotal == 0
+                ? null
+                : (downloadedBytes / downloadTotal!).clamp(0.0, 1.0)),
+      if (!widget.embedded) const Divider(),
+      if (!widget.embedded)
         Text(widget.entry.description.isEmpty
             ? '暂无简介'
             : widget.entry.description),
-      ]),
+    ];
+    if (widget.embedded) return Column(children: content);
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.entry.title, maxLines: 1)),
+      body: ListView(padding: const EdgeInsets.all(16), children: content),
     );
   }
 }

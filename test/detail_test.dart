@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -10,6 +11,7 @@ import 'package:shared_preferences_platform_interface/shared_preferences_async_p
 import 'package:youying/catalog.dart';
 import 'package:youying/library.dart';
 import 'package:youying/main.dart';
+import 'package:youying/player.dart';
 
 final class _NoWrites extends SharedPreferencesAsyncPlatform {
   @override
@@ -18,6 +20,13 @@ final class _NoWrites extends SharedPreferencesAsyncPlatform {
 }
 
 void main() {
+  setUp(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(MediaController.methods, (_) async {
+        throw PlatformException(code: 'test-no-native-player');
+      }));
+  tearDown(() => TestDefaultBinaryMessengerBinding
+      .instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(MediaController.methods, null));
   setUp(() => SharedPreferencesAsyncPlatform.instance = _NoWrites());
   Library library() => Library(SharedPreferencesAsync())
     ..sources = [
@@ -38,6 +47,30 @@ void main() {
         ]
       });
 
+  for (final width in [320.0, 390.0, 1280.0]) {
+    testWidgets('embedded detail fits $width width and larger text',
+        (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = Size(width, 844);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final client = CatalogClient(
+          client: MockClient((_) async => http.Response(body(), 200)));
+      addTearDown(client.dispose);
+      await tester.pumpWidget(MaterialApp(
+          builder: (_, child) => PhoneViewport(
+              child: MediaQuery.withClampedTextScaling(
+                  minScaleFactor: 1.4, maxScaleFactor: 1.4, child: child!)),
+          home: DetailPage(entry: entry, library: library(), client: client)));
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(find.text('Full description'), 200,
+          scrollable: find.byType(Scrollable).first);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('detail loads selectable episodes from the configured source',
       (tester) async {
     final response = Completer<http.Response>();
@@ -52,9 +85,16 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
     });
     await tester.pumpAndSettle();
-    expect(find.text('Full description'), findsOneWidget);
     expect(find.text('ep1'), findsOneWidget);
+    expect(find.text('ep2'), findsNothing);
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'B'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, 'B'));
+    await tester.pumpAndSettle();
     expect(find.text('ep2'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Full description'), 300,
+        scrollable: find.byType(Scrollable).first);
+    expect(find.text('Full description'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsNothing);
   });
 

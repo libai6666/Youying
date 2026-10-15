@@ -27,6 +27,7 @@ class SourceEndpoint {
 
   final String name;
   final String url;
+
   final bool enabled;
 
   SourceEndpoint withEnabled(bool value) =>
@@ -69,12 +70,22 @@ class Episode {
   final String name;
   final String url;
 
+  static int? ordinal(String name) =>
+      int.tryParse(RegExp(r'^(?:第|ep)?0*(\d+)(?:集|话|期)?$', caseSensitive: false)
+              .firstMatch(name.trim())
+              ?.group(1) ??
+          '');
+
   static Episode? onLine(
       List<Episode> target, Episode? current, List<Episode> previous) {
     if (target.isEmpty) return null;
     if (current != null) {
       for (final episode in target) {
-        if (episode.name.trim() == current.name.trim()) return episode;
+        if (episode.name.trim() == current.name.trim() ||
+            (ordinal(current.name) != null &&
+                ordinal(episode.name) == ordinal(current.name))) {
+          return episode;
+        }
       }
       final index =
           previous.indexWhere((episode) => episode.url == current.url);
@@ -97,6 +108,9 @@ class MediaEntry {
     this.year = '',
     this.area = '',
     this.actors = '',
+    this.director = '',
+    this.language = '',
+    this.duration = '',
     this.remarks = '',
     this.lines = const {},
   });
@@ -112,6 +126,9 @@ class MediaEntry {
   final String year;
   final String area;
   final String actors;
+  final String director;
+  final String language;
+  final String duration;
   final String remarks;
   final Map<String, List<Episode>> lines;
 
@@ -175,6 +192,9 @@ class MediaEntry {
         year: cleanCatalogText(item['vod_year']),
         area: cleanCatalogText(item['vod_area']),
         actors: cleanCatalogText(item['vod_actor']),
+        director: cleanCatalogText(item['vod_director']),
+        language: cleanCatalogText(item['vod_lang']),
+        duration: cleanCatalogText(item['vod_duration']),
         remarks: cleanCatalogText(item['vod_remarks']),
         lines: lines,
       ));
@@ -194,6 +214,9 @@ class MediaEntry {
         'year': year,
         'area': area,
         'actors': actors,
+        'director': director,
+        'language': language,
+        'duration': duration,
         'remarks': remarks,
         'lines': lines.map((key, episodes) => MapEntry(
               key,
@@ -232,6 +255,9 @@ class MediaEntry {
       year: value['year']?.toString() ?? '',
       area: value['area']?.toString() ?? '',
       actors: value['actors']?.toString() ?? '',
+      director: value['director']?.toString() ?? '',
+      language: value['language']?.toString() ?? '',
+      duration: value['duration']?.toString() ?? '',
       remarks: value['remarks']?.toString() ?? '',
       lines: lines,
     );
@@ -249,6 +275,65 @@ String cleanCatalogText(Object? value) => (value ?? '')
     .replaceAll('&quot;', '"')
     .replaceAll(RegExp(r'\s+'), ' ')
     .trim();
+
+String catalogKind(String category) {
+  if (category.contains('漫剧')) return 'AI漫剧';
+  if (category.contains('短剧')) return '短剧';
+  if (category.contains('综艺')) return '综艺';
+  if (category == '动画片' || category.endsWith('片') || category == '电影') {
+    return '电影';
+  }
+  if (category.contains('动漫') || category == '动画') return '动漫';
+  if (category.endsWith('剧')) return '电视剧';
+  return category;
+}
+
+String catalogTitle(String title) =>
+    cleanCatalogText(title).replaceAll(RegExp(r'\s+'), '').toLowerCase();
+
+String catalogIdentity(MediaEntry entry) {
+  final kind = catalogKind(entry.category);
+  if (entry.year.isEmpty || kind.isEmpty) return 'id:${entry.id}';
+  return jsonEncode([catalogTitle(entry.title), entry.year, kind]);
+}
+
+class CatalogGroup {
+  CatalogGroup(this.entries);
+  final List<MediaEntry> entries;
+  MediaEntry get primary => entries.firstWhere((entry) => entry.playable,
+      orElse: () => entries.first);
+}
+
+List<CatalogGroup> groupCatalog(Iterable<MediaEntry> entries,
+    {String query = ''}) {
+  final groups = <String, CatalogGroup>{};
+  final seen = <String>{};
+  for (final entry in entries) {
+    if (!seen.add(entry.id)) continue;
+    groups
+        .putIfAbsent(catalogIdentity(entry), () => CatalogGroup([]))
+        .entries
+        .add(entry);
+  }
+  final result = groups.values.toList();
+  if (query.trim().isNotEmpty) {
+    final keyword = catalogTitle(query);
+    int rank(CatalogGroup group) {
+      final title = catalogTitle(group.primary.title);
+      if (title == keyword) return 0;
+      if (title.startsWith(keyword)) return 1;
+      if (title.contains(keyword)) return 2;
+      return 3;
+    }
+
+    final order = {for (var i = 0; i < result.length; i++) result[i]: i};
+    result.sort((a, b) {
+      final compared = rank(a).compareTo(rank(b));
+      return compared != 0 ? compared : order[a]!.compareTo(order[b]!);
+    });
+  }
+  return result;
+}
 
 class CatalogCategory {
   const CatalogCategory(this.id, this.name, {this.parentId = '0'});

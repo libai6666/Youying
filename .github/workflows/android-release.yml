@@ -1,7 +1,10 @@
 name: Android 正式 APK
-run-name: 正式 APK · ${{ inputs.architecture }} · ${{ github.ref_name }}
+run-name: 正式 APK · ${{ inputs.architecture || 'universal' }} · ${{ github.ref_name }} · ${{ github.run_number }}
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       architecture:
@@ -49,6 +52,16 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: 验证版本脚本并读取手动版本
+        id: version
+        run: |
+          & ./scripts/test-version.ps1
+          & ./scripts/set-version.ps1 -ShowVersion -NonInteractive
+          $content = Get-Content -LiteralPath 'pubspec.yaml' -Raw
+          $version = [regex]::Match($content, '(?m)^version[ \t]*:[ \t]*[''"]?(?<value>[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+)')
+          if (-not $version.Success) { throw 'Cannot read the CI app version.' }
+          "version=$($version.Groups['value'].Value)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+
       - name: 安装 JDK 17 并缓存 Gradle 依赖
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
@@ -92,7 +105,8 @@ jobs:
 
       - name: 检查、测试、正式构建和 APK 验签
         env:
-          APK_ARCH: ${{ inputs.architecture }}
+          APK_ARCH: ${{ inputs.architecture || 'universal' }}
+          APP_VERSION: ${{ steps.version.outputs.version }}
           YOUYING_KEYSTORE_BASE64: ${{ secrets.YOUYING_KEYSTORE_BASE64 }}
           YOUYING_KEY_ALIAS: ${{ secrets.YOUYING_KEY_ALIAS }}
           YOUYING_STORE_PASSWORD: ${{ secrets.YOUYING_STORE_PASSWORD }}
@@ -125,7 +139,9 @@ jobs:
               }
               if (-not $checksums) { throw 'No verified release APK found.' }
               $checksums | Set-Content -LiteralPath 'dist/release/SHA256SUMS.txt' -Encoding ascii
-              "Source commit: $env:GITHUB_SHA`n`n$($checksums -join "`n")" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+              $info = "Version: $env:APP_VERSION`nArchitecture: $env:APK_ARCH`nSource commit: $env:GITHUB_SHA`nRun: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID`nAttempt: $env:GITHUB_RUN_ATTEMPT"
+              $info | Set-Content -LiteralPath 'dist/release/BUILD-INFO.txt' -Encoding utf8
+              "$info`n`n$($checksums -join "`n")" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
           }
           finally {
               if (Test-Path -LiteralPath $directory) { Remove-Item -LiteralPath $directory -Recurse -Force }
@@ -143,10 +159,11 @@ jobs:
       - name: 保存正式 APK 和 SHA-256（7 天）
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: youying-release-${{ inputs.architecture }}-${{ github.run_number }}-${{ github.run_attempt }}
+          name: youying-release-${{ steps.version.outputs.version }}-${{ inputs.architecture || 'universal' }}-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
             dist/release/*.apk
             dist/release/SHA256SUMS.txt
+            dist/release/BUILD-INFO.txt
           if-no-files-found: error
           retention-days: 7
           compression-level: 0

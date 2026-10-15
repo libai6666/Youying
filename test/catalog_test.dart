@@ -7,6 +7,32 @@ import 'package:youying/catalog.dart';
 import 'package:youying/library.dart';
 
 void main() {
+  test(
+      'detail metadata survives persistence and numbered episodes match across lines',
+      () {
+    final entry = MediaEntry.parseResponse({
+      'list': [
+        {
+          'vod_id': 1,
+          'vod_name': 'Title',
+          'vod_director': '<b>Director</b>',
+          'vod_lang': '国语',
+          'vod_duration': '45分钟',
+        }
+      ]
+    }, 'test')
+        .single;
+    final restored = MediaEntry.fromJson(entry.toJson());
+    expect(restored.director, 'Director');
+    expect(restored.language, '国语');
+    expect(restored.duration, '45分钟');
+    const current = Episode(name: '第02集', url: 'https://example.com/old.m3u8');
+    const target = [
+      Episode(name: 'EP2', url: 'https://example.com/2.m3u8'),
+      Episode(name: 'EP1', url: 'https://example.com/1.m3u8'),
+    ];
+    expect(Episode.onLine(target, current, [current])?.name, 'EP2');
+  });
   test('detail uses stable remote ID and clears stale search parameters',
       () async {
     final requested = <Uri>[];

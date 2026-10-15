@@ -94,6 +94,15 @@ class Library extends ChangeNotifier {
       sources.where((source) => source.enabled).toList();
   final Map<String, MediaEntry> favorites = {};
   final Map<String, MediaEntry> history = {};
+  List<MediaEntry> get recentEntries {
+    final seen = <String>{};
+    return history.values
+        .toList()
+        .reversed
+        .where((entry) => seen.add(catalogIdentity(entry)))
+        .toList();
+  }
+
   final Map<String, int> positionsMs = {};
   final Map<String, String> downloads = {};
 
@@ -217,9 +226,14 @@ class Library extends ChangeNotifier {
     ]);
   }
 
+  bool isFavorite(MediaEntry entry) => favorites.values.any((saved) =>
+      saved.id == entry.id || catalogIdentity(saved) == catalogIdentity(entry));
+
   Future<void> toggleFavorite(MediaEntry entry) async {
-    if (favorites.containsKey(entry.id)) {
-      favorites.remove(entry.id);
+    if (isFavorite(entry)) {
+      favorites.removeWhere((_, saved) =>
+          saved.id == entry.id ||
+          catalogIdentity(saved) == catalogIdentity(entry));
     } else {
       favorites[entry.id] = entry;
     }

@@ -28,8 +28,8 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  late final BrowseController browse =
-      BrowseController(widget.library, client: widget.browseClient);
+  late final DirectoryController browse =
+      DirectoryController(widget.library, client: widget.browseClient);
   int selected = 0;
   String category = '首页';
   String ranking = '电视剧';
@@ -60,7 +60,10 @@ class _HomePageState extends State<HomePage> {
   void _detail(MediaEntry entry) => Navigator.push<void>(
       context,
       MaterialPageRoute(
-          builder: (_) => DetailPage(entry: entry, library: widget.library)));
+          builder: (_) => DetailPage(
+              entry: entry,
+              library: widget.library,
+              variants: browse.variantsFor(entry))));
 
   void _selectCategory(String label) {
     setState(() {
@@ -123,35 +126,14 @@ class _HomePageState extends State<HomePage> {
       );
 
   Widget _sourcePicker({bool dark = false}) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         child: Row(children: [
           Expanded(
-              child: PopupMenuButton<SourceEndpoint>(
-            tooltip: '切换内容源',
-            enabled: widget.library.enabledSources.isNotEmpty,
-            onSelected: (source) async {
-              await browse.selectSource(source);
-              if (!mounted) return;
-              await browse.ensureLabel(selected == 1 ? ranking : category);
-            },
-            itemBuilder: (_) => widget.library.enabledSources
-                .map((source) =>
-                    PopupMenuItem(value: source, child: Text(source.name)))
-                .toList(),
-            child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 7),
-                child: Row(children: [
-                  Flexible(
-                      child: Text(browse.source?.name ?? '未启用内容源',
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: dark ? Colors.white70 : _muted))),
-                  Icon(Icons.expand_more,
-                      size: 14, color: dark ? Colors.white70 : _muted),
-                ])),
-          )),
-          Text(selected == 1 ? '源更新顺序 · 非热度榜' : '最近更新 · 来自所选源',
+              child: Text('多源聚合 · ${widget.library.enabledSources.length} 个来源',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 11, color: dark ? Colors.white70 : _muted))),
+          Text(selected == 1 ? '聚合更新顺序 · 非热度榜' : '更新推荐 · 非平台热度',
               style: TextStyle(
                   fontSize: 10, color: dark ? Colors.white70 : _muted)),
         ]),
@@ -199,7 +181,7 @@ class _HomePageState extends State<HomePage> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 children: [
                   _sourcePicker(),
-                  if (browse.source == null)
+                  if (!browse.hasSources)
                     _emptySources()
                   else if (category == '首页')
                     ..._homeSections()
@@ -214,24 +196,15 @@ class _HomePageState extends State<HomePage> {
       ]);
 
   List<Widget> _homeSections() {
-    final latest = browse.feeds[''];
-    final entries = latest?.listing?.entries ?? [];
+    final entries = browse.feedFor('电视剧')?.entries ?? [];
     return [
       if (entries.isNotEmpty)
         Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: _Spotlight(
-                key: ValueKey('${browse.source?.url}:${entries.first.id}'),
+                key: ValueKey(entries.first.id),
                 entries: entries.take(5).toList(),
                 onTap: _detail)),
-      if (latest?.loading == true && entries.isEmpty) const _FeedLoading(),
-      if (latest?.error != null)
-        _Feedback(
-            message: latest!.error!,
-            action: '重试',
-            onTap: () => browse.load('', retry: true)),
-      if (latest?.listing != null && entries.isEmpty)
-        const _Feedback(message: '该源暂未返回内容'),
       if (browse.loadingCategories) const _FeedLoading(),
       if (browse.categoryError != null)
         _Feedback(
@@ -239,15 +212,22 @@ class _HomePageState extends State<HomePage> {
             action: '重试分类',
             onTap: browse.refresh),
       for (final (title, label) in [
-        ('剧集更新', '电视剧'),
-        ('综艺更新', '综艺'),
-        ('动漫更新', '动漫')
+        ('热播剧推荐', '电视剧'),
+        ('热播综艺', '综艺'),
+        ('热播动漫', '动漫')
       ])
-        if (browse.categoryFor(label) != null) _posterSection(title, label),
-      if (!browse.loadingCategories &&
-          browse.categories.isEmpty &&
-          entries.isNotEmpty)
-        _posterStrip('最近更新', entries),
+        if (browse.supports(label)) _posterSection(title, label),
+      if (browse.sourceIssues.isNotEmpty)
+        ExpansionTile(
+            title: const Text('部分内容来源暂时不可用',
+                style: TextStyle(fontSize: 12, color: _muted)),
+            children: [
+              for (final issue in browse.sourceIssues.entries)
+                ListTile(
+                    dense: true,
+                    title: Text(issue.key),
+                    subtitle: Text(issue.value))
+            ]),
     ];
   }
 
@@ -262,22 +242,14 @@ class _HomePageState extends State<HomePage> {
         _Feedback(
             message: feed!.error!,
             action: '重试',
-            onTap: () =>
-                browse.load(browse.categoryFor(label)!.id, retry: true)),
-      if (feed?.listing != null)
-        if (feed!.listing!.entries.isEmpty)
-          const _Feedback(message: '暂无内容')
+            onTap: () => browse.loadLabel(label, retry: true)),
+      if (feed?.loaded == true)
+        if (feed!.entries.isEmpty)
+          const _Feedback(message: '暂未取得内容，可在更多中继续加载')
         else
-          _PosterStrip(
-              entries: feed.listing!.entries.take(10).toList(), onTap: _detail),
+          _PosterStrip(entries: feed.entries.take(10).toList(), onTap: _detail),
     ]);
   }
-
-  Widget _posterStrip(String title, List<MediaEntry> entries) =>
-      Column(children: [
-        _SectionHeader(title: title),
-        _PosterStrip(entries: entries.take(10).toList(), onTap: _detail),
-      ]);
 
   Widget _categoryContent(String label, {bool ranked = false}) {
     if (browse.loadingCategories) return const _FeedLoading();
@@ -285,18 +257,18 @@ class _HomePageState extends State<HomePage> {
       return _Feedback(
           message: browse.categoryError!, action: '重试', onTap: browse.refresh);
     }
-    final id = browse.categoryFor(label)?.id;
-    if (id == null) {
+    if (!browse.supports(label)) {
       return _Feedback(
-          message:
-              label == '电视直播' ? '当前为点播源，未接入电视直播' : '该源未提供“$label”分类，可切换内容源');
+          message: label == '电视直播' ? '当前为点播源，未接入电视直播' : '已启用来源未提供“$label”分类');
     }
-    final feed = browse.feeds[id];
+    final feed = browse.feedFor(label);
     if (feed == null) {
       return _Feedback(
-          message: '点击加载该分类', action: '加载', onTap: () => browse.load(id));
+          message: '点击加载该分类',
+          action: '加载',
+          onTap: () => browse.loadLabel(label));
     }
-    final entries = feed.listing?.entries ?? [];
+    final entries = feed.entries;
     return Column(children: [
       if (ranked)
         for (final entry in entries)
@@ -324,12 +296,20 @@ class _HomePageState extends State<HomePage> {
             message: feed.error!,
             action: '重试',
             onTap: () =>
-                browse.load(id, more: feed.listing != null, retry: true)),
+                browse.loadLabel(label, more: feed.loaded, retry: true)),
       if (!feed.loading && feed.error == null && entries.isEmpty)
-        const _Feedback(message: '该分类暂无内容'),
-      if (!feed.loading && feed.error == null && feed.listing?.hasMore == true)
+        _Feedback(message: feed.hasMore ? '暂未取得内容，可继续加载其他子分类' : '该分类暂无内容'),
+      if (feed.issues.isNotEmpty && feed.error == null)
+        ExpansionTile(
+            title: const Text('部分来源加载失败', style: TextStyle(fontSize: 12)),
+            children: [
+              TextButton(
+                  onPressed: () => browse.loadLabel(label, retry: true),
+                  child: const Text('重试未完成来源'))
+            ]),
+      if (!feed.loading && feed.error == null && feed.hasMore)
         TextButton(
-            onPressed: () => browse.load(id, more: true),
+            onPressed: () => browse.loadLabel(label, more: true),
             child: const Text('加载更多')),
     ]);
   }
@@ -351,7 +331,7 @@ class _HomePageState extends State<HomePage> {
                   key: PageStorageKey('ranking-$ranking'),
                   padding: const EdgeInsets.only(top: 8, bottom: 20),
                   children: [
-                    browse.source == null
+                    !browse.hasSources
                         ? _emptySources()
                         : _categoryContent(ranking, ranked: true)
                   ],
@@ -387,8 +367,7 @@ class _HomePageState extends State<HomePage> {
       _Feedback(message: '没有启用的内容源', action: '前往设置', onTap: _settings);
 
   Widget _profile() {
-    final recent =
-        widget.library.history.values.toList().reversed.take(10).toList();
+    final recent = widget.library.recentEntries.take(10).toList();
     return ListView(
         padding: const EdgeInsets.fromLTRB(16, 36, 16, 24),
         children: [
@@ -836,11 +815,9 @@ class _SavedEntries extends StatelessWidget {
   Widget build(BuildContext context) => AnimatedBuilder(
       animation: library,
       builder: (context, _) {
-        final entries = (favorites ? library.favorites : library.history)
-            .values
-            .toList()
-            .reversed
-            .toList();
+        final entries = favorites
+            ? library.favorites.values.toList().reversed.toList()
+            : library.recentEntries;
         if (entries.isEmpty) {
           return _Feedback(
               message: favorites ? '还没有收藏，去详情页收藏喜欢的内容吧' : '还没有观看历史');

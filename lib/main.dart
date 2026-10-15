@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'browse.dart';
 import 'catalog.dart';
+import 'directory.dart';
 import 'library.dart';
 import 'player.dart';
 import 'source_presets.dart';
@@ -28,6 +29,7 @@ class _YouyingAppState extends State<YouyingApp> {
   Widget build(BuildContext context) => MaterialApp(
         title: '柚影',
         theme: youyingTheme(),
+        builder: (_, child) => PhoneViewport(child: child!),
         home: FutureBuilder<Library>(
           future: library,
           builder: (context, snapshot) {
@@ -44,6 +46,27 @@ class _YouyingAppState extends State<YouyingApp> {
       );
 }
 
+class PhoneViewport extends StatelessWidget {
+  const PhoneViewport({super.key, required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) =>
+      LayoutBuilder(builder: (context, constraints) {
+        final width = constraints.maxWidth.clamp(0.0, 480.0);
+        return ColoredBox(
+          color: const Color(0xff242424),
+          child: Center(
+              child: SizedBox(
+                  width: width,
+                  child: MediaQuery(
+                      data: MediaQuery.of(context)
+                          .copyWith(size: Size(width, constraints.maxHeight)),
+                      child: child))),
+        );
+      });
+}
+
 class SearchPage extends StatefulWidget {
   const SearchPage({super.key, required this.library, this.client});
   final Library library;
@@ -57,63 +80,98 @@ class _SearchPageState extends State<SearchPage> {
   final TextEditingController query = TextEditingController();
   late final CatalogClient client = widget.client ?? CatalogClient();
   List<MediaEntry> results = [];
+  List<CatalogGroup> groups = [];
+  String filter = '全部';
+  int _generation = 0;
+  String _sourceFingerprint = '';
   bool searching = false;
   String? status;
   final List<String> sourceResults = [];
 
   @override
+  void initState() {
+    super.initState();
+    _sourceFingerprint = jsonEncode(
+        widget.library.enabledSources.map((s) => s.toJson()).toList());
+    widget.library.addListener(_sourcesChanged);
+  }
+
+  void _sourcesChanged() {
+    final enabled = widget.library.enabledSources;
+    final fingerprint = jsonEncode(enabled.map((s) => s.toJson()).toList());
+    if (_sourceFingerprint == fingerprint) return;
+    _sourceFingerprint = fingerprint;
+    _generation++;
+    setState(() {
+      results
+          .removeWhere((entry) => !enabled.any((s) => s.name == entry.source));
+      groups = groupCatalog(results, query: query.text);
+      searching = false;
+      sourceResults.clear();
+      status = '来源设置已变化，请重新搜索';
+    });
+  }
+
+  @override
   void dispose() {
+    _generation++;
+    widget.library.removeListener(_sourcesChanged);
     if (widget.client == null) client.dispose();
     query.dispose();
     super.dispose();
   }
 
   Future<void> _search() async {
-    if (searching ||
-        query.text.trim().isEmpty ||
-        widget.library.enabledSources.isEmpty) {
+    if (query.text.trim().isEmpty || widget.library.enabledSources.isEmpty) {
       return;
     }
+    final generation = ++_generation;
     setState(() {
       searching = true;
       results = [];
+      groups = [];
+      filter = '全部';
       sourceResults.clear();
       status = '正在搜索已启用的源…';
     });
     final searchQuery = query.text.trim();
-    final all = <MediaEntry>[];
+    final foundBySource = <String, List<MediaEntry>>{};
     var failed = 0;
-    final sources = widget.library.enabledSources;
-    for (final source in sources) {
-      if (!widget.library.enabledSources.any((current) =>
-          current.name == source.name && current.url == source.url)) {
-        if (!mounted) return;
-        setState(() => sourceResults.add('${source.name}：已停用或移除，跳过'));
-        continue;
+    final sources = List.of(widget.library.enabledSources);
+    var next = 0;
+    Future<void> worker() async {
+      while (mounted && generation == _generation && next < sources.length) {
+        final source = sources[next++];
+        String summary;
+        try {
+          final found = await client.search(source, searchQuery);
+          foundBySource[source.name] = found;
+          summary = '${source.name}：${found.length} 条';
+        } catch (_) {
+          failed++;
+          summary = '${source.name}：请求失败或返回格式不兼容';
+        }
+        if (!mounted || generation != _generation) return;
+        setState(() {
+          results = [
+            for (final source in sources) ...?foundBySource[source.name]
+          ];
+          groups = groupCatalog(results, query: searchQuery);
+          sourceResults.add(summary);
+          status =
+              '已搜索 ${sourceResults.length}/${sources.length} 个来源 · ${groups.length} 部影片';
+        });
       }
-      String summary;
-      try {
-        final found = await client.search(source, searchQuery);
-        all.addAll(found);
-        summary = '${source.name}：${found.length} 条';
-      } catch (_) {
-        failed++;
-        summary = '${source.name}：请求失败或返回格式不兼容';
-      }
-      if (!mounted) return;
-      setState(() {
-        results = List.of(all);
-        sourceResults.add(summary);
-        status =
-            '已完成 ${sourceResults.length}/${sources.length} 个源，找到 ${all.length} 条';
-      });
     }
+
+    await Future.wait(
+        List.generate(sources.length.clamp(0, 3), (_) => worker()));
+    if (!mounted || generation != _generation) return;
     setState(() {
-      results = all;
       searching = false;
       status = failed > 0
-          ? '找到 ${all.length} 条；$failed 个源未返回受支持的 JSON（或连接失败）。'
-          : '找到 ${all.length} 条。来自已启用的第三方源，并非原应用服务。';
+          ? '找到 ${groups.length} 部影片 · $failed 个来源暂不可用'
+          : '找到 ${groups.length} 部影片';
     });
   }
 
@@ -164,14 +222,12 @@ class _SearchPageState extends State<SearchPage> {
           onSubmitted: (_) => _search(),
           textInputAction: TextInputAction.search,
           decoration: InputDecoration(
-            labelText: '从已启用的源中搜索',
+            labelText: '搜索影片、电视剧、动漫',
             border: const OutlineInputBorder(),
             suffixIcon: IconButton(
               tooltip: '搜索',
               icon: const Icon(Icons.search),
-              onPressed: widget.library.enabledSources.isEmpty || searching
-                  ? null
-                  : _search,
+              onPressed: widget.library.enabledSources.isEmpty ? null : _search,
             ),
           ),
         ),
@@ -183,17 +239,47 @@ class _SearchPageState extends State<SearchPage> {
               icon: const Icon(Icons.play_circle_outline, size: 18),
               label: const Text('手动播放直链'),
             )),
-        Text(status ??
-            '已启用 ${widget.library.enabledSources.length} 个源；输入关键词开始搜索，不会自动请求。'),
-        for (final result in sourceResults) Text(result),
+        Text(status ?? '输入片名，搜索已启用的内容来源'),
         if (searching) const LinearProgressIndicator(),
+        if (sourceResults.isNotEmpty)
+          ExpansionTile(
+              title: const Text('来源状态', style: TextStyle(fontSize: 12)),
+              children: [
+                for (final result in sourceResults)
+                  ListTile(
+                      dense: true,
+                      title: Text(result, style: const TextStyle(fontSize: 12)))
+              ]),
+        SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
+              for (final label in ['全部', '电影', '电视剧', '动漫', '综艺', '短剧', 'AI漫剧'])
+                Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: ChoiceChip(
+                        label: Text(label),
+                        selected: filter == label,
+                        onSelected: (_) => setState(() => filter = label)))
+            ])),
         const SizedBox(height: 6),
         EntryList(
-          entries: results,
+          entries: [
+            for (final group in groups)
+              if (filter == '全部' ||
+                  catalogKind(group.primary.category) == filter)
+                group.primary
+          ],
+          variants: {
+            for (final group in groups) group.primary.id: group.entries
+          },
           title: '搜索结果',
           empty: widget.library.enabledSources.isEmpty
               ? '没有启用的源，请在“设置”中启用或添加。'
-              : '输入关键词并点击搜索。',
+              : (searching
+                  ? '正在寻找匹配内容…'
+                  : status == null
+                      ? '输入关键词并点击搜索。'
+                      : '暂无匹配内容，试试其他片名或分类。'),
           library: widget.library,
         ),
       ]);
@@ -205,57 +291,68 @@ class EntryList extends StatelessWidget {
       required this.entries,
       required this.library,
       required this.title,
-      required this.empty});
+      required this.empty,
+      this.variants = const {}});
   final List<MediaEntry> entries;
   final Library library;
   final String title;
   final String empty;
+  final Map<String, List<MediaEntry>> variants;
 
   @override
-  Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Text(title, style: Theme.of(context).textTheme.titleMedium),
-          ),
-          if (entries.isEmpty)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(empty),
-            ),
-          for (final entry in entries)
-            Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _CatalogCard(
-                  entry: entry,
-                  trailing: IconButton(
-                    tooltip:
-                        library.favorites.containsKey(entry.id) ? '取消收藏' : '收藏',
-                    icon: Icon(library.favorites.containsKey(entry.id)
-                        ? Icons.favorite
-                        : Icons.favorite_border),
-                    onPressed: () => library.toggleFavorite(entry),
-                  ),
-                  onTap: () => Navigator.push<void>(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) =>
-                            DetailPage(entry: entry, library: library)),
-                  ),
-                )),
-        ],
-      );
+  Widget build(BuildContext context) => AnimatedBuilder(
+      animation: library,
+      builder: (_, __) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child:
+                    Text(title, style: Theme.of(context).textTheme.titleMedium),
+              ),
+              if (entries.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(empty),
+                ),
+              for (final entry in entries)
+                Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _CatalogCard(
+                      entry: entry,
+                      trailing: IconButton(
+                        tooltip: library.isFavorite(entry) ? '取消收藏' : '收藏',
+                        icon: Icon(library.isFavorite(entry)
+                            ? Icons.favorite
+                            : Icons.favorite_border),
+                        onPressed: () => library.toggleFavorite(entry),
+                      ),
+                      onTap: () => Navigator.push<void>(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => DetailPage(
+                                entry: entry,
+                                library: library,
+                                variants: variants[entry.id] ?? const [])),
+                      ),
+                    )),
+            ],
+          ));
 }
 
 class DetailPage extends StatefulWidget {
   const DetailPage(
-      {super.key, required this.entry, required this.library, this.client});
+      {super.key,
+      required this.entry,
+      required this.library,
+      this.client,
+      this.variants = const []});
   final MediaEntry entry;
   final Library library;
 
   final CatalogClient? client;
+  final List<MediaEntry> variants;
 
   @override
   State<DetailPage> createState() => _DetailPageState();
@@ -267,33 +364,116 @@ class _DetailPageState extends State<DetailPage> {
   Library get library => widget.library;
   bool loading = false;
   String? error;
+  final Map<String, MediaEntry> _choices = {};
+  int _generation = 0;
+  bool findingSources = false;
+  String? sourceStatus;
+  Episode? _episode;
+  List<Episode> _previousLine = [];
+  int _position = 0;
+  Episode? _initialEpisode;
+  int? _initialPosition;
 
   @override
   void initState() {
     super.initState();
+    for (final candidate in [widget.entry, ...widget.variants]) {
+      _choices[candidate.id] = candidate;
+    }
     _load();
+  }
+
+  void _preparePlayback(MediaEntry next) {
+    final episodes = next.lines.values.where((line) => line.isNotEmpty);
+    _initialEpisode = episodes.isEmpty
+        ? null
+        : Episode.onLine(episodes.first, _episode, _previousLine);
+    final sameEpisode = _episode != null &&
+        _initialEpisode != null &&
+        (_initialEpisode!.name.trim() == _episode!.name.trim() ||
+            (Episode.ordinal(_episode!.name) != null &&
+                Episode.ordinal(_episode!.name) ==
+                    Episode.ordinal(_initialEpisode!.name)));
+    _initialPosition = _episode == null ? null : (sameEpisode ? _position : 0);
+  }
+
+  void _switchSource(MediaEntry next) {
+    if (next.id == entry.id) return;
+    _generation++;
+    setState(() {
+      _preparePlayback(next);
+      entry = next;
+      loading = false;
+      error = null;
+    });
+    _load();
+  }
+
+  Future<void> _findSources() async {
+    if (findingSources) return;
+    final identity = catalogIdentity(entry);
+    final title = entry.title;
+    setState(() {
+      findingSources = true;
+      sourceStatus = null;
+    });
+    final sources = List.of(library.enabledSources);
+    var failed = 0;
+    for (var start = 0; start < sources.length; start += 3) {
+      await Future.wait(sources.skip(start).take(3).map((source) async {
+        try {
+          final found = await client.search(source, title);
+          if (!mounted) return;
+          for (final candidate in found) {
+            if (catalogIdentity(candidate) == identity &&
+                library.enabledSources.any((s) => s.name == candidate.source)) {
+              _choices[candidate.id] = candidate;
+            }
+          }
+        } catch (_) {
+          failed++;
+        }
+      }));
+      if (!mounted) return;
+    }
+    setState(() {
+      findingSources = false;
+      sourceStatus =
+          '已找到 ${_choices.length} 个版本${failed > 0 ? '，$failed 个来源暂不可用' : ''}';
+    });
   }
 
   Future<void> _load() async {
     final sources =
         library.enabledSources.where((source) => source.name == entry.source);
     if (entry.remoteId == null || sources.isEmpty || loading) return;
+    final generation = ++_generation;
+    final requested = entry;
     setState(() {
       loading = true;
       error = null;
     });
     try {
-      final full = await client.detail(sources.first, entry);
-      if (mounted) setState(() => entry = full);
+      final full = await client.detail(sources.first, requested);
+      if (mounted && generation == _generation) {
+        setState(() {
+          _preparePlayback(full);
+          entry = full;
+          _choices[full.id] = full;
+        });
+      }
     } catch (_) {
-      if (mounted) setState(() => error = '详情请求失败；已保留现有线路，可重试');
+      if (mounted && generation == _generation) {
+        setState(() => error = '详情请求失败；已保留现有线路，可重试');
+      }
     } finally {
-      if (mounted) setState(() => loading = false);
+      if (mounted && generation == _generation) setState(() => loading = false);
     }
   }
 
   @override
   void dispose() {
+    _generation++;
     if (widget.client == null) client.dispose();
     super.dispose();
   }
@@ -307,11 +487,9 @@ class _DetailPageState extends State<DetailPage> {
               AnimatedBuilder(
                   animation: library,
                   builder: (context, _) => IconButton(
-                        tooltip: library.favorites.containsKey(entry.id)
-                            ? '取消收藏'
-                            : '收藏',
+                        tooltip: library.isFavorite(entry) ? '取消收藏' : '收藏',
                         icon: Icon(
-                            library.favorites.containsKey(entry.id)
+                            library.isFavorite(entry)
                                 ? Icons.star
                                 : Icons.star_outline,
                             color: _orange),
@@ -324,7 +502,35 @@ class _DetailPageState extends State<DetailPage> {
             Text(error!),
             TextButton(onPressed: _load, child: const Text('重试详情')),
           ],
-          Text(entry.source, style: Theme.of(context).textTheme.labelMedium),
+          if (!loading && entry.playable)
+            PlayerPage(
+                key: ObjectKey(entry),
+                entry: entry,
+                library: library,
+                embedded: true,
+                initial: _initialEpisode,
+                initialPositionMs: _initialPosition,
+                onPlaybackChanged: (episode, position) {
+                  _episode = episode;
+                  _position = position;
+                  _previousLine = entry.lines.values.firstWhere(
+                      (line) => line.any((e) => e.url == episode.url),
+                      orElse: () => []);
+                }),
+          const _SectionHeader(title: '播放来源', inset: 0),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            for (final candidate in _choices.values)
+              ChoiceChip(
+                  label: Text(candidate.source),
+                  selected: candidate.id == entry.id,
+                  onSelected: (_) => _switchSource(candidate)),
+            ActionChip(
+                label: Text(findingSources ? '正在匹配…' : '查找更多播放源'),
+                onPressed: findingSources ? null : _findSources),
+          ]),
+          if (sourceStatus != null)
+            Text(sourceStatus!,
+                style: const TextStyle(fontSize: 12, color: _muted)),
           const SizedBox(height: 12),
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             SizedBox(
@@ -352,28 +558,15 @@ class _DetailPageState extends State<DetailPage> {
                       style: const TextStyle(color: _orange, fontSize: 12)),
                 ])),
           ]),
+          const SizedBox(height: 12),
+          if (entry.actors.isNotEmpty) Text('主演：${entry.actors}'),
+          if (entry.director.isNotEmpty) Text('导演：${entry.director}'),
+          if (entry.language.isNotEmpty) Text('语言：${entry.language}'),
+          if (entry.duration.isNotEmpty) Text('时长：${entry.duration}'),
           const _SectionHeader(title: '剧情简介', inset: 0),
           Text(entry.description.isEmpty ? '暂无简介' : entry.description),
           const SizedBox(height: 12),
           if (!entry.playable) const Text('没有确认可播放的直链；可能需要未恢复的解析接口。'),
-          for (final line in entry.lines.entries) ...[
-            Text(line.key, style: Theme.of(context).textTheme.titleMedium),
-            Wrap(spacing: 8, children: [
-              for (final episode in line.value)
-                OutlinedButton(
-                  onPressed: () => Navigator.push<void>(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => PlayerPage(
-                              entry: entry,
-                              initial: episode,
-                              library: library,
-                            )),
-                  ),
-                  child: Text(episode.name),
-                ),
-            ]),
-          ],
         ]),
       );
 }
@@ -391,7 +584,7 @@ class LibraryPage extends StatelessWidget {
         const SizedBox(height: 12),
         if (showHistory)
           EntryList(
-            entries: library.history.values.toList().reversed.toList(),
+            entries: library.recentEntries,
             library: library,
             title: '观看历史',
             empty: '尚无观看历史。',

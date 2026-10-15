@@ -46,13 +46,16 @@ Build-Tools、Platform-Tools、NDK **28.2.13676358**、Git。先安装并加入 
 版本格式为 `X.Y.Z+N`：前半是显示版本名，`N` 是 Android 构建号，升级必须递增，不能在新版本名下重置为 1。
 菜单 **8** 可以交互查看/修改；也可用 `-Action version -Version 0.2.1 -BuildNumber 10` 显式设置两者。
 脚本拒绝相同/降低的构建号及错误格式，只修改版本字段，保留注释、编码和换行，不触碰签名、不构建 APK。
-只查看请使用 `-ShowVersion`；每次需要发新包时先修改版本，再执行 `-Action release`。
+只查看请使用 `-ShowVersion`；本机发布前先修改版本，再执行 `-Action release`。
+GitHub 云端仅使用你提交的版本，不自动加 1；推送、手动运行和重跑均不会改版本。
+以上 `-Action version` 命令只修改版本，不构建 APK；本地修改后暂不推送 `main`，就不会触发云端打包。
 
 ## 文档
 
 GitHub 云端正式包：先按[配置说明](prd/09-github-actions.md)保存四项仓库 Secrets，
-再到 Actions 手动运行 **Android 正式 APK**，成功后下载 Artifacts 中的 APK 与 SHA-256。
-流程只允许私有仓库的默认分支，不自动发布 Release，不使用本机代理或 Windows DPAPI 文件。
+提交并推送到 `main` 后自动运行 **Android 正式 APK**，默认通用包；也可在 Actions 手动选择架构。
+成功后下载 Artifacts 中的 APK、SHA-256 和版本/提交信息。
+流程只允许私有仓库的默认分支（自动触发分支为 `main`），不自动发布 Release，不使用本机代理或 Windows DPAPI 文件。
 
 - [项目状态、功能边界及产品约定](prd/01-product-status.md)
 - [手机 USB 调试与故障排查](prd/02-usb-debug.md)

@@ -86,8 +86,8 @@ void main() {
       'home renders real-feed sections and search navigation without login or ads',
       (tester) async {
     await mount(tester);
-    expect(find.text('剧集更新'), findsOneWidget);
-    expect(find.text('综艺更新'), findsOneWidget);
+    expect(find.text('热播剧推荐'), findsOneWidget);
+    expect(find.text('热播综艺'), findsOneWidget);
     expect(find.text('请输入关键字'), findsOneWidget);
     expect(find.text('登录'), findsNothing);
     expect(find.text('广告'), findsNothing);
@@ -104,7 +104,7 @@ void main() {
     final client = await mount(tester);
     await tester.tap(find.text('排行榜'));
     await tester.pumpAndSettle();
-    expect(find.text('源更新顺序 · 非热度榜'), findsOneWidget);
+    expect(find.text('聚合更新顺序 · 非热度榜'), findsOneWidget);
     expect(find.text('剧集示例 1'), findsOneWidget);
     await tester.tap(find.text('电影'));
     await tester.pumpAndSettle();
@@ -151,7 +151,7 @@ void main() {
     await tester.ensureVisible(find.text('AI漫剧'));
     await tester.tap(find.text('AI漫剧'));
     await tester.pumpAndSettle();
-    expect(find.text('该源未提供“AI漫剧”分类，可切换内容源'), findsOneWidget);
+    expect(find.text('已启用来源未提供“AI漫剧”分类'), findsOneWidget);
   });
 
   testWidgets('320px phone has no overflowing layouts', (tester) async {

@@ -1,4 +1,17 @@
-﻿[CmdletBinding()]
+﻿<#
+# 查看当前版本，不修改
+.\dev.cmd -Action version -ShowVersion
+
+# 设置版本名，构建号自动加 1
+.\dev.cmd -Action version -Version 0.2.0
+
+# 或者只将构建号加 1
+.\dev.cmd -Action version -BumpBuild
+
+# 或者同时指定两者，构建号必须大于当前值
+.\dev.cmd -Action version -Version 0.2.1 -BuildNumber 10
+#>
+[CmdletBinding()]
 param(
     [string]$Version,
     [ValidateRange(1,2100000000)][long]$BuildNumber,

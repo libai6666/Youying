@@ -12,6 +12,7 @@ import 'package:youying/library.dart';
 import 'package:youying/main.dart';
 import 'package:youying/offline_downloads.dart';
 import 'package:youying/player.dart';
+import 'package:youying/ui_locale.dart';
 
 final class _MemoryWrites extends SharedPreferencesAsyncPlatform {
   bool failWrites = false;
@@ -106,6 +107,7 @@ void main() {
       bool preferOffline = false,
       MediaEntry entry = _entry,
       Episode? initial,
+      bool english = false,
       double width = 390,
       double textScale = 1}) async {
     tester.view.devicePixelRatio = 1;
@@ -113,6 +115,9 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetPhysicalSize);
     await tester.pumpWidget(MaterialApp(
+        locale: english ? const Locale('en', 'US') : null,
+        supportedLocales: appLocales,
+        localizationsDelegates: english ? appLocalizationsDelegates : null,
         builder: (_, child) => PhoneViewport(
             child: MediaQuery.withClampedTextScaling(
                 minScaleFactor: textScale,
@@ -159,6 +164,33 @@ void main() {
     await emit(tester, 'duration', 60000);
     await emit(tester, 'position', 59000);
     await emit(tester, 'completed', true);
+  }
+
+  for (final width in [320.0, 390.0, 1280.0]) {
+    for (final scale in [1.4, 2.0]) {
+      testWidgets('English player and picker fit $width at $scale',
+          (tester) async {
+        await mount(tester,
+            english: true,
+            width: width,
+            textScale: scale,
+            showDetails: true,
+            entry: _series());
+        expect(find.byTooltip('Details'), findsOneWidget);
+        expect(find.text('第1集'), findsWidgets);
+        expect(tester.takeException(), isNull);
+        await tester.tap(find.text('All 195 episodes'));
+        await tester.pumpAndSettle();
+        expect(find.text('Oldest first'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.tap(find.byTooltip('Close episodes'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Download episodes').last);
+        await tester.pumpAndSettle();
+        expect(find.text('View downloads'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
   }
 
   testWidgets('completed native task opens cache token without a network open',

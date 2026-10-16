@@ -21,18 +21,24 @@ final class _NoStorage extends SharedPreferencesAsyncPlatform {
 class PreviewCatalog extends CatalogClient {
   final requested = <String>[];
   bool fail = false;
+  Completer<void>? categoriesGate;
+  Completer<void>? browseGate;
   @override
-  Future<List<CatalogCategory>> categories(SourceEndpoint source) async =>
-      const [
-        CatalogCategory('1', '电影'),
-        CatalogCategory('2', '连续剧'),
-        CatalogCategory('3', '综艺'),
-        CatalogCategory('4', '动漫'),
-        CatalogCategory('46', '爽文短剧'),
-      ];
+  Future<List<CatalogCategory>> categories(SourceEndpoint source) async {
+    if (categoriesGate != null) await categoriesGate!.future;
+    return const [
+      CatalogCategory('1', '电影'),
+      CatalogCategory('2', '连续剧'),
+      CatalogCategory('3', '综艺'),
+      CatalogCategory('4', '动漫'),
+      CatalogCategory('46', '爽文短剧'),
+    ];
+  }
+
   @override
   Future<CatalogListing> browse(SourceEndpoint source,
       {String? categoryId, int page = 1}) async {
+    if (browseGate != null) await browseGate!.future;
     requested.add('$categoryId:$page');
     if (fail) throw const FormatException('mock network failure');
     final name = switch (categoryId) {
@@ -160,6 +166,41 @@ class ArtworkCatalog extends PreviewCatalog {
       ]);
 }
 
+class SparseArtworkCatalog extends PreviewCatalog {
+  int lookups = 0;
+
+  @override
+  Future<CatalogListing> browse(SourceEndpoint source,
+          {String? categoryId, int page = 1}) async =>
+      CatalogListing(source.name == 'A'
+          ? const [
+              MediaEntry(
+                  id: 'A:1',
+                  title: '同片异年',
+                  source: 'A',
+                  year: '2026',
+                  category: '国产剧',
+                  actors: '演员甲,演员乙',
+                  poster: 'https://images.example/blocked.jpg'),
+            ]
+          : []);
+
+  @override
+  Future<List<MediaEntry>> search(SourceEndpoint source, String query) async {
+    lookups++;
+    return const [
+      MediaEntry(
+          id: 'B:2',
+          title: '同片异年',
+          source: 'B',
+          year: '2014',
+          category: '国产剧',
+          actors: '演员甲,演员乙',
+          poster: 'https://images.example/working.jpg'),
+    ];
+  }
+}
+
 class _ImageClient extends Fake implements HttpClient {
   final requests = <Uri>[];
   bool failAll = false;
@@ -233,6 +274,7 @@ void main() {
 
   Future<_ImageClient> mountArtwork(WidgetTester tester,
       {String backdrop = '',
+      PreviewCatalog? catalog,
       bool failAll = false,
       double width = 390,
       double textScale = 1}) async {
@@ -247,7 +289,7 @@ void main() {
       await mount(tester,
           width: width,
           textScale: textScale,
-          catalog: ArtworkCatalog(backdrop: backdrop),
+          catalog: catalog ?? ArtworkCatalog(backdrop: backdrop),
           library: artworkLibrary());
       for (var i = 0; i < 8; i++) {
         await tester.runAsync(
@@ -281,6 +323,17 @@ void main() {
             matching: find.byWidgetPredicate(
                 (widget) => widget is RawImage && widget.image != null)),
         findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'failed cover searches unloaded source and corroborates different years',
+      (tester) async {
+    final client = SparseArtworkCatalog();
+    final images = await mountArtwork(tester, catalog: client);
+    expect(images.requests.any((uri) => uri.path == '/blocked.jpg'), true);
+    expect(images.requests.any((uri) => uri.path == '/working.jpg'), true);
+    expect(client.lookups, 1);
     expect(tester.takeException(), isNull);
   });
 
@@ -352,6 +405,30 @@ void main() {
     expect(PageStorage.of(context).readState(context), isA<double>());
   }
 
+  testWidgets('home keeps spotlight and poster sections while refreshing',
+      (tester) async {
+    final client = PreviewCatalog();
+    await mount(tester, catalog: client);
+    expect(find.text('剧集示例 1'), findsWidgets);
+    client.categoriesGate = Completer<void>();
+    client.browseGate = Completer<void>();
+    final pending = tester
+        .widget<RefreshIndicator>(find.byType(RefreshIndicator).first)
+        .onRefresh();
+    await tester.pump();
+    expect(find.text('剧集示例 1'), findsWidgets);
+    expect(find.text('热播剧推荐'), findsOneWidget);
+    client.categoriesGate!.complete();
+    await tester.pump();
+    expect(find.text('剧集示例 1'), findsWidgets);
+    client.fail = true;
+    client.browseGate!.complete();
+    await tester.pumpAndSettle();
+    await pending;
+    expect(find.text('剧集示例 1'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('home source issues do not read saved scroll offsets as booleans',
       (tester) async {
     final client = PartialFailureCatalog();
@@ -377,6 +454,36 @@ void main() {
 
   for (final ranked in [false, true]) {
     testWidgets(
+        '${ranked ? 'ranking' : 'category'} keeps cards throughout refresh and failure',
+        (tester) async {
+      final client = PreviewCatalog();
+      await mount(tester, catalog: client);
+      if (ranked) {
+        await tester.tap(find.text('排行榜'));
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(find.text('电影'));
+      await tester.pumpAndSettle();
+      expect(find.text('影片示例 1'), findsOneWidget);
+      client.categoriesGate = Completer<void>();
+      client.browseGate = Completer<void>();
+      final pending = tester
+          .widget<RefreshIndicator>(find.byType(RefreshIndicator).first)
+          .onRefresh();
+      await tester.pump();
+      expect(find.text('影片示例 1'), findsOneWidget);
+      client.categoriesGate!.complete();
+      await tester.pump();
+      expect(find.text('影片示例 1'), findsOneWidget);
+      client.fail = true;
+      client.browseGate!.complete();
+      await tester.pumpAndSettle();
+      await pending;
+      expect(find.text('影片示例 1'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
         '${ranked ? 'ranking' : 'category'} issues have separate storage from scrolling',
         (tester) async {
       final client = PartialFailureCatalog();
@@ -387,6 +494,10 @@ void main() {
       }
       await tester.tap(find.text('电影'));
       await tester.pumpAndSettle();
+      if (!ranked) {
+        tester.view.physicalSize = const Size(390, 420);
+        await tester.pumpAndSettle();
+      }
       final list =
           find.byKey(PageStorageKey('${ranked ? 'ranking' : 'home'}-电影'));
       await saveScrollOffset(tester, list);

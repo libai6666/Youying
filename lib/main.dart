@@ -5,12 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'browse.dart';
+import 'artwork.dart';
 import 'catalog.dart';
 import 'directory.dart';
 import 'download_widgets.dart';
 import 'library.dart';
 import 'player.dart';
 import 'source_presets.dart';
+import 'ui_locale.dart';
 
 part 'home.dart';
 
@@ -30,13 +32,17 @@ class _YouyingAppState extends State<YouyingApp> {
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: '柚影',
+        onGenerateTitle: (context) => uiText(context, '柚影'),
+        supportedLocales: appLocales,
+        localizationsDelegates: appLocalizationsDelegates,
         theme: youyingTheme(),
         builder: (_, child) => PhoneViewport(child: child!),
         home: FutureBuilder<Library>(
           future: library,
           builder: (context, snapshot) {
             if (snapshot.hasError) {
-              return const Scaffold(body: Center(child: Text('无法读取本地数据')));
+              return const Scaffold(
+                  body: Center(child: LocalizedText('无法读取本地数据')));
             }
             if (!snapshot.hasData) {
               return const Scaffold(
@@ -216,7 +222,8 @@ class _SearchPageState extends State<SearchPage> {
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('请输入有效的 HTTPS URL 和 JSON 格式请求头')),
+          const SnackBar(
+              content: LocalizedText('请输入有效的 HTTPS URL 和 JSON 格式请求头')),
         );
       }
     }
@@ -227,8 +234,8 @@ class _SearchPageState extends State<SearchPage> {
       await action();
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('搜索历史保存失败，请重试；不影响搜索')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: LocalizedText('搜索历史保存失败，请重试；不影响搜索')));
       }
     }
   }
@@ -237,15 +244,15 @@ class _SearchPageState extends State<SearchPage> {
     final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-                title: const Text('清空搜索历史？'),
-                content: const Text('仅删除搜索关键词，不影响观看记录和下载。'),
+                title: const LocalizedText('清空搜索历史？'),
+                content: const LocalizedText('仅删除搜索关键词，不影响观看记录和下载。'),
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(context, false),
-                      child: const Text('取消')),
+                      child: const LocalizedText('取消')),
                   TextButton(
                       onPressed: () => Navigator.pop(context, true),
-                      child: const Text('清空')),
+                      child: const LocalizedText('清空')),
                 ]));
     if (confirmed == true && mounted) {
       await _saveSearchHistory(widget.library.clearSearchHistory);
@@ -260,10 +267,10 @@ class _SearchPageState extends State<SearchPage> {
           onSubmitted: (_) => _search(),
           textInputAction: TextInputAction.search,
           decoration: InputDecoration(
-            labelText: '搜索影片、电视剧、动漫',
+            labelText: uiText(context, '搜索影片、电视剧、动漫'),
             border: const OutlineInputBorder(),
             suffixIcon: IconButton(
-              tooltip: '搜索',
+              tooltip: uiText(context, '搜索'),
               icon: const Icon(Icons.search),
               onPressed: widget.library.enabledSources.isEmpty ? null : _search,
             ),
@@ -280,12 +287,12 @@ class _SearchPageState extends State<SearchPage> {
                   children: [
                     Row(children: [
                       Expanded(
-                          child: Text('搜索历史',
+                          child: LocalizedText('搜索历史',
                               style: Theme.of(context).textTheme.titleSmall)),
                       TextButton.icon(
                           onPressed: _clearSearchHistory,
                           icon: const Icon(Icons.delete_outline, size: 18),
-                          label: const Text('清空')),
+                          label: const LocalizedText('清空')),
                     ]),
                     Wrap(spacing: 8, runSpacing: 4, children: [
                       for (final keyword in history)
@@ -296,7 +303,8 @@ class _SearchPageState extends State<SearchPage> {
                               query.text = keyword;
                               unawaited(_search());
                             },
-                            deleteButtonTooltipMessage: '删除搜索记录：$keyword',
+                            deleteButtonTooltipMessage:
+                                uiText(context, '删除搜索记录：$keyword'),
                             onDeleted: () => _saveSearchHistory(
                                 () => widget.library.removeSearch(keyword))),
                     ]),
@@ -308,18 +316,20 @@ class _SearchPageState extends State<SearchPage> {
             child: TextButton.icon(
               onPressed: _direct,
               icon: const Icon(Icons.play_circle_outline, size: 18),
-              label: const Text('手动播放直链'),
+              label: const LocalizedText('手动播放直链'),
             )),
-        Text(status ?? '输入片名，搜索已启用的内容来源'),
+        LocalizedText(status ?? '输入片名，搜索已启用的内容来源'),
         if (searching) const LinearProgressIndicator(),
         if (sourceResults.isNotEmpty)
           ExpansionTile(
-              title: const Text('来源状态', style: TextStyle(fontSize: 12)),
+              title:
+                  const LocalizedText('来源状态', style: TextStyle(fontSize: 12)),
               children: [
                 for (final result in sourceResults)
                   ListTile(
                       dense: true,
-                      title: Text(result, style: const TextStyle(fontSize: 12)))
+                      title: LocalizedText(result,
+                          style: const TextStyle(fontSize: 12)))
               ]),
         SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -328,7 +338,7 @@ class _SearchPageState extends State<SearchPage> {
                 Padding(
                     padding: const EdgeInsets.only(right: 6),
                     child: ChoiceChip(
-                        label: Text(label),
+                        label: LocalizedText(label),
                         selected: filter == label,
                         onSelected: (_) => setState(() => filter = label)))
             ])),
@@ -379,13 +389,13 @@ class EntryList extends StatelessWidget {
             children: [
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 12),
-                child:
-                    Text(title, style: Theme.of(context).textTheme.titleMedium),
+                child: LocalizedText(title,
+                    style: Theme.of(context).textTheme.titleMedium),
               ),
               if (entries.isEmpty)
                 Padding(
                   padding: const EdgeInsets.all(16),
-                  child: Text(empty),
+                  child: LocalizedText(empty),
                 ),
               for (final entry in entries)
                 Padding(
@@ -393,7 +403,8 @@ class EntryList extends StatelessWidget {
                     child: _CatalogCard(
                       entry: entry,
                       trailing: IconButton(
-                        tooltip: library.isFavorite(entry) ? '取消收藏' : '收藏',
+                        tooltip: uiText(
+                            context, library.isFavorite(entry) ? '取消收藏' : '收藏'),
                         icon: Icon(library.isFavorite(entry)
                             ? Icons.favorite
                             : Icons.favorite_border),
@@ -491,8 +502,8 @@ class _DetailPageState extends State<DetailPage> {
 
   Future<void> _findSources() async {
     if (findingSources) return;
-    final identity = catalogIdentity(entry);
-    final title = entry.title;
+    final work = entry;
+    final title = catalogWorkTitle(work.title);
     setState(() {
       findingSources = true;
       sourceStatus = null;
@@ -505,7 +516,7 @@ class _DetailPageState extends State<DetailPage> {
           final found = await client.search(source, title);
           if (!mounted) return;
           for (final candidate in found) {
-            if (catalogIdentity(candidate) == identity &&
+            if (sameCatalogWork(work, candidate) &&
                 library.enabledSources.any((s) => s.name == candidate.source)) {
               _choices[candidate.id] = candidate;
             }
@@ -538,7 +549,7 @@ class _DetailPageState extends State<DetailPage> {
                         : null,
                     onTap: () => Navigator.pop(sheet, choice)),
               ListTile(
-                  title: const Text('查找更多播放源'),
+                  title: const LocalizedText('查找更多播放源'),
                   leading: const Icon(Icons.search),
                   onTap: () {
                     Navigator.pop(sheet);
@@ -574,7 +585,7 @@ class _DetailPageState extends State<DetailPage> {
                           ('语言', entry.language),
                           ('时长', entry.duration)
                         ])
-                          if (value.isNotEmpty) Text('$label：$value'),
+                          if (value.isNotEmpty) LocalizedText('$label：$value'),
                         const SizedBox(height: 16),
                         Text(entry.description.isEmpty
                             ? '暂无简介'
@@ -640,7 +651,7 @@ class _DetailPageState extends State<DetailPage> {
                                   strokeWidth: 2, color: Colors.white)),
                           const SizedBox(height: 12),
                         ],
-                        Text(
+                        LocalizedText(
                             loading
                                 ? '正在加载播放资源…'
                                 : error != null
@@ -659,10 +670,10 @@ class _DetailPageState extends State<DetailPage> {
                                         source.name == entry.source))
                                   TextButton(
                                       onPressed: _load,
-                                      child: const Text('重试详情')),
+                                      child: const LocalizedText('重试详情')),
                                 TextButton(
                                     onPressed: _pickSource,
-                                    child: const Text('换源')),
+                                    child: const LocalizedText('换源')),
                               ]),
                       ]))))));
 
@@ -677,7 +688,8 @@ class _DetailPageState extends State<DetailPage> {
             AnimatedBuilder(
                 animation: library,
                 builder: (context, _) => IconButton(
-                      tooltip: library.isFavorite(entry) ? '取消收藏' : '收藏',
+                      tooltip: uiText(
+                          context, library.isFavorite(entry) ? '取消收藏' : '收藏'),
                       icon: Icon(
                           library.isFavorite(entry)
                               ? Icons.star
@@ -708,8 +720,8 @@ class _DetailPageState extends State<DetailPage> {
                           orElse: () => []);
                     })),
         if (error != null && playingEntry != null) ...[
-          Text(error!),
-          TextButton(onPressed: _load, child: const Text('重试详情')),
+          LocalizedText(error!),
+          TextButton(onPressed: _load, child: const LocalizedText('重试详情')),
         ],
         if (playingEntry != null || !loading) ...[
           const _SectionHeader(title: '播放来源', inset: 0),
@@ -720,11 +732,11 @@ class _DetailPageState extends State<DetailPage> {
                   selected: candidate.id == entry.id,
                   onSelected: (_) => _switchSource(candidate)),
             ActionChip(
-                label: Text(findingSources ? '正在匹配…' : '查找更多播放源'),
+                label: LocalizedText(findingSources ? '正在匹配…' : '查找更多播放源'),
                 onPressed: findingSources ? null : _findSources),
           ]),
           if (sourceStatus != null)
-            Text(sourceStatus!,
+            LocalizedText(sourceStatus!,
                 style: const TextStyle(fontSize: 12, color: _muted)),
           const SizedBox(height: 12),
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -754,10 +766,10 @@ class _DetailPageState extends State<DetailPage> {
                 ])),
           ]),
           const SizedBox(height: 12),
-          if (entry.actors.isNotEmpty) Text('主演：${entry.actors}'),
-          if (entry.director.isNotEmpty) Text('导演：${entry.director}'),
-          if (entry.language.isNotEmpty) Text('语言：${entry.language}'),
-          if (entry.duration.isNotEmpty) Text('时长：${entry.duration}'),
+          if (entry.actors.isNotEmpty) LocalizedText('主演：${entry.actors}'),
+          if (entry.director.isNotEmpty) LocalizedText('导演：${entry.director}'),
+          if (entry.language.isNotEmpty) LocalizedText('语言：${entry.language}'),
+          if (entry.duration.isNotEmpty) LocalizedText('时长：${entry.duration}'),
           const _SectionHeader(title: '剧情简介', inset: 0),
           Text(entry.description.isEmpty ? '暂无简介' : entry.description),
           const SizedBox(height: 12),
@@ -797,7 +809,7 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorMessage)),
+          SnackBar(content: LocalizedText(errorMessage)),
         );
       }
     } finally {
@@ -826,11 +838,12 @@ class _SettingsPageState extends State<SettingsPage> {
       animation: widget.library,
       builder: (context, _) =>
           ListView(padding: const EdgeInsets.all(16), children: [
-            Text('播放设置', style: Theme.of(context).textTheme.titleLarge),
+            LocalizedText('播放设置',
+                style: Theme.of(context).textTheme.titleLarge),
             SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('自动续播下一集'),
-                subtitle: const Text('播放结束后等待 3 秒，继续播放当前线路的下一集'),
+                title: const LocalizedText('自动续播下一集'),
+                subtitle: const LocalizedText('播放结束后等待 3 秒，继续播放当前线路的下一集'),
                 value: widget.library.autoPlayNext,
                 onChanged: saving
                     ? null
@@ -838,17 +851,19 @@ class _SettingsPageState extends State<SettingsPage> {
                         () => widget.library.setAutoPlayNext(value),
                         errorMessage: '自动续播设置保存失败，请重试')),
             const SizedBox(height: 16),
-            Text('下载设置', style: Theme.of(context).textTheme.titleLarge),
+            LocalizedText('下载设置',
+                style: Theme.of(context).textTheme.titleLarge),
             ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('下载并发数'),
-                subtitle: const Text('默认 3 个，最多 10 个；按剧集任务计数'),
+                title: const LocalizedText('下载并发数'),
+                subtitle: const LocalizedText('默认 3 个，最多 10 个；按剧集任务计数'),
                 trailing: DropdownButton<int>(
                   key: ValueKey(widget.library.offline.parallelism),
                   value: widget.library.offline.parallelism,
                   items: [
                     for (var count = 1; count <= 10; count++)
-                      DropdownMenuItem(value: count, child: Text('$count 个'))
+                      DropdownMenuItem(
+                          value: count, child: LocalizedText('$count 个'))
                   ],
                   onChanged: saving
                       ? null
@@ -861,27 +876,27 @@ class _SettingsPageState extends State<SettingsPage> {
                           }
                         },
                 )),
-            const Text(
+            const LocalizedText(
                 '支持来源允许保存的普通文件与 AES-128 HLS 点播。DRM 需平台授权离线许可；直播暂不支持。任务与缓存保存在应用私有目录，暂停与重启后可继续。'),
             const SizedBox(height: 16),
-            Text('源配置', style: Theme.of(context).textTheme.titleLarge),
-            Text(
+            LocalizedText('源配置', style: Theme.of(context).textTheme.titleLarge),
+            LocalizedText(
                 '共 ${widget.library.sources.length} 个源，已启用 ${widget.library.enabledSources.length} 个。'),
-            const Text(
+            const LocalizedText(
                 '公开源由 GitHub 配置收录，不等于内容授权或长期可用。升级补充新源并清理退役预设；保留自定义接口和启停状态，删除后不会自动恢复。'),
             const SelectableText(sourcePresetRepository),
-            const Text('停用后不再发起该源的搜索/详情请求；不取消已开始的请求或播放。'),
+            const LocalizedText('停用后不再发起该源的搜索/详情请求；不取消已开始的请求或播放。'),
             const SizedBox(height: 12),
             for (final source in widget.library.sources)
               Card(
                   child: ListTile(
                 title: Text(source.name),
-                subtitle: Text(
+                subtitle: LocalizedText(
                     '${source.url}\n${presetFor(source) == null ? '用户手动配置；未验证' : '$sourcePresetCheckedOn 历史抽查：${presetFor(source)!.observation}'}'),
                 isThreeLine: true,
                 trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                   Semantics(
-                    label: '${source.name}参与搜索',
+                    label: uiText(context, '${source.name}参与搜索'),
                     child: Switch(
                       value: source.enabled,
                       onChanged: saving
@@ -891,7 +906,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                   ),
                   IconButton(
-                    tooltip: '移除${source.name}',
+                    tooltip: uiText(context, '移除${source.name}'),
                     icon: const Icon(Icons.delete_outline),
                     onPressed: saving
                         ? null
@@ -903,16 +918,17 @@ class _SettingsPageState extends State<SettingsPage> {
             FilledButton.icon(
               onPressed: saving ? null : _addSource,
               icon: const Icon(Icons.add),
-              label: const Text('添加源'),
+              label: const LocalizedText('添加源'),
             ),
             const SizedBox(height: 16),
             const Divider(),
-            Text('恢复范围', style: Theme.of(context).textTheme.titleLarge),
+            LocalizedText('恢复范围',
+                style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
-            const Text(
+            const LocalizedText(
                 '来自原 APK 的确认项：Flutter/Dart AOT 字符串与安卓 Media3 播放器接口。播放器 Android 实现、界面、收藏、历史、Media3 离线下载和 JSON 列表兼容器均为新写代码。'),
             const SizedBox(height: 8),
-            const Text('不包含：未知服务端、完整原始 Dart、原本的解析/下载加密逻辑、广告与统计 SDK。'),
+            const LocalizedText('不包含：未知服务端、完整原始 Dart、原本的解析/下载加密逻辑、广告与统计 SDK。'),
           ]));
 }
 
@@ -947,32 +963,35 @@ class _InputDialogState extends State<_InputDialog> {
   @override
   Widget build(BuildContext context) => AlertDialog(
         scrollable: true,
-        title: Text(widget.title),
+        title: LocalizedText(widget.title),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           TextField(
               controller: primary,
               autocorrect: false,
               enableSuggestions: false,
-              decoration: InputDecoration(labelText: widget.primaryLabel)),
+              decoration: InputDecoration(
+                  labelText: uiText(context, widget.primaryLabel))),
           TextField(
               controller: secondary,
               autocorrect: false,
               enableSuggestions: false,
               minLines: 1,
               maxLines: 3,
-              decoration: InputDecoration(labelText: widget.secondaryLabel)),
+              decoration: InputDecoration(
+                  labelText: uiText(context, widget.secondaryLabel))),
           const SizedBox(height: 12),
-          Text(widget.help),
+          LocalizedText(widget.help),
         ]),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('取消')),
+              onPressed: () => Navigator.pop(context),
+              child: const LocalizedText('取消')),
           FilledButton(
             onPressed: () => Navigator.pop(context, (
               primary: primary.text.trim(),
               secondary: secondary.text.trim()
             )),
-            child: Text(widget.confirm),
+            child: LocalizedText(widget.confirm),
           ),
         ],
       );

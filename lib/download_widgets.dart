@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'catalog.dart';
+import 'ui_locale.dart';
 import 'library.dart';
 import 'main.dart' show DetailPage;
 import 'offline_downloads.dart';
@@ -93,50 +94,65 @@ class _DownloadEpisodeSheetState extends State<DownloadEpisodeSheet> {
             child: Column(children: [
               Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 4, 0),
-                  child: Row(children: [
-                    const Expanded(
-                        child: Text('下载剧集',
-                            style: TextStyle(
-                                fontSize: 18, fontWeight: FontWeight.bold))),
-                    TextButton(
-                        onPressed: submitting
-                            ? null
-                            : () => setState(() {
-                                  if (count == pending.length) {
-                                    selected.clear();
-                                  } else {
-                                    selected.addAll(pending.map((e) => e.url));
-                                  }
-                                }),
-                        child: Text(count == pending.length && count > 0
-                            ? '取消全选'
-                            : '全选')),
-                    IconButton(
-                        tooltip: '下载剧集排序',
-                        onPressed: () => setState(() => reversed = !reversed),
-                        icon: const Icon(Icons.sort)),
-                    IconButton(
-                        tooltip: '关闭下载选集',
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.close)),
-                  ])),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          const Expanded(
+                              child: LocalizedText('下载剧集',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold))),
+                          IconButton(
+                              tooltip: uiText(context, '关闭下载选集'),
+                              onPressed: () => Navigator.pop(context),
+                              icon: const Icon(Icons.close)),
+                        ]),
+                        Wrap(
+                            alignment: WrapAlignment.end,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              TextButton(
+                                  onPressed: submitting
+                                      ? null
+                                      : () => setState(() {
+                                            if (count == pending.length) {
+                                              selected.clear();
+                                            } else {
+                                              selected.addAll(
+                                                  pending.map((e) => e.url));
+                                            }
+                                          }),
+                                  child: LocalizedText(
+                                      count == pending.length && count > 0
+                                          ? '取消全选'
+                                          : '全选')),
+                              IconButton(
+                                  tooltip: uiText(context, '下载剧集排序'),
+                                  onPressed: () =>
+                                      setState(() => reversed = !reversed),
+                                  icon: const Icon(Icons.sort)),
+                            ]),
+                      ])),
               Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                   child: Align(
                       alignment: Alignment.centerLeft,
-                      child: Text(
+                      child: LocalizedText(
                           '${widget.entry.title} · 共 ${widget.episodes.length} 集 · 仅下载你有权保存的内容',
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis))),
               Expanded(
                   child: GridView.builder(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 2,
-                              mainAxisExtent: 72,
-                              mainAxisSpacing: 8,
-                              crossAxisSpacing: 8),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisExtent: 40 +
+                              MediaQuery.textScalerOf(context).scale(14) * 2.4,
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8),
                       itemCount: episodes.length,
                       itemBuilder: (context, index) {
                         final episode = episodes[index];
@@ -179,7 +195,9 @@ class _DownloadEpisodeSheetState extends State<DownloadEpisodeSheet> {
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis),
                                   if (exists)
-                                    Text(task?.status ?? '已完成',
+                                    LocalizedText(task?.status ?? '已完成',
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(fontSize: 11)),
                                   if (checked)
                                     const Icon(Icons.check_circle, size: 16),
@@ -188,7 +206,7 @@ class _DownloadEpisodeSheetState extends State<DownloadEpisodeSheet> {
               if (message != null)
                 Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                    child: Text(message!)),
+                    child: LocalizedText(message!)),
               SafeArea(
                   top: false,
                   child: Padding(
@@ -197,7 +215,7 @@ class _DownloadEpisodeSheetState extends State<DownloadEpisodeSheet> {
                         Expanded(
                             child: FilledButton(
                                 onPressed: submitting ? null : _enqueue,
-                                child: Text(submitting
+                                child: LocalizedText(submitting
                                     ? '加入中…'
                                     : count == 0 || count == pending.length
                                         ? '全部开始'
@@ -206,7 +224,7 @@ class _DownloadEpisodeSheetState extends State<DownloadEpisodeSheet> {
                         Expanded(
                             child: OutlinedButton(
                                 onPressed: () => Navigator.pop(context, true),
-                                child: const Text('查看下载列表'))),
+                                child: const LocalizedText('查看下载列表'))),
                       ]))),
             ]));
       });
@@ -217,7 +235,7 @@ class DownloadsPage extends StatelessWidget {
   final Library library;
   @override
   Widget build(BuildContext context) => Scaffold(
-      appBar: AppBar(title: const Text('我的下载')),
+      appBar: AppBar(title: const LocalizedText('我的下载')),
       body: DownloadsView(library: library));
 }
 
@@ -246,16 +264,16 @@ class _DownloadsViewState extends State<DownloadsView> {
       final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-                  title: const Text('删除下载？'),
-                  content: Text(
+                  title: const LocalizedText('删除下载？'),
+                  content: LocalizedText(
                       '${task.entry.title} · ${task.episode.name}\n同时移除已缓存的离线内容。'),
                   actions: [
                     TextButton(
                         onPressed: () => Navigator.pop(context, false),
-                        child: const Text('取消')),
+                        child: const LocalizedText('取消')),
                     FilledButton(
                         onPressed: () => Navigator.pop(context, true),
-                        child: const Text('删除'))
+                        child: const LocalizedText('删除'))
                   ]));
       if (confirmed != true || !mounted) return;
     }
@@ -264,8 +282,8 @@ class _DownloadsViewState extends State<DownloadsView> {
       await widget.library.offline.action(action, task);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('下载任务操作失败，请重试')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: LocalizedText('下载任务操作失败，请重试')));
       }
     } finally {
       if (mounted) setState(() => busy.remove(task.id));
@@ -322,13 +340,13 @@ class _DownloadsViewState extends State<DownloadsView> {
                   (2, '已完成')
                 ])
                   ChoiceChip(
-                      label: Text(title),
+                      label: LocalizedText(title),
                       selected: filter == index,
                       onSelected: (_) => setState(() => filter = index)),
               ])),
           Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
+              child: LocalizedText(
                   widget.groupId == null
                       ? '同时下载最多 ${widget.library.offline.parallelism} 集 · 可在设置中调整'
                       : groups.isEmpty
@@ -338,13 +356,13 @@ class _DownloadsViewState extends State<DownloadsView> {
           if (!widget.library.offline.available)
             const Padding(
                 padding: EdgeInsets.all(12),
-                child: Text('离线服务尚不可用，请重新启动包含原生更新的调试包')),
+                child: LocalizedText('离线服务尚不可用，请重新启动包含原生更新的调试包')),
           Expanded(
               child: ListView(padding: const EdgeInsets.all(12), children: [
             if (tasks.isEmpty && !showLegacy)
               const Padding(
                   padding: EdgeInsets.all(32),
-                  child: Center(child: Text('暂无下载任务'))),
+                  child: Center(child: LocalizedText('暂无下载任务'))),
             if (widget.groupId == null)
               for (final group in visibleGroups)
                 _DownloadGroupTile(
@@ -365,10 +383,11 @@ class _DownloadsViewState extends State<DownloadsView> {
                     onPlay: () => _play(task),
                     onAction: (action) => _action(task, action)),
             if (showLegacy) ...[
-              const Text('旧版已下载文件（在对应影片中选择“播放已下载文件”）'),
+              const LocalizedText('旧版已下载文件（在对应影片中选择“播放已下载文件”）'),
               for (final _ in widget.library.downloads.entries)
                 const ListTile(
-                    leading: Icon(Icons.offline_pin), title: Text('已保存的本地视频')),
+                    leading: Icon(Icons.offline_pin),
+                    title: LocalizedText('已保存的本地视频')),
             ],
           ])),
         ]);
@@ -394,7 +413,7 @@ class DownloadsGroupPage extends StatelessWidget {
                 onPressed: () =>
                     _openOriginalResource(context, library, group.entry),
                 icon: const Icon(Icons.open_in_new, size: 18),
-                label: const Text('原资源')),
+                label: const LocalizedText('原资源')),
           ]),
       body: DownloadsView(
           library: library, groupId: group.id, initialFilter: initialFilter));
@@ -458,13 +477,14 @@ class _DownloadGroupTile extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.bodySmall),
-                      Text(
+                      LocalizedText(
                           '已缓存 ${group.completedCount} 集 · ${_bytes(group.bytes)}',
                           style: Theme.of(context).textTheme.bodySmall),
                       if (statuses.isNotEmpty)
-                        Text(
+                        LocalizedText(
                             statuses.entries
-                                .map((entry) => '${entry.key} ${entry.value} 集')
+                                .map((entry) =>
+                                    '${uiText(context, entry.key)} ${entry.value} ${uiText(context, '集')}')
                                 .join(' · '),
                             style: Theme.of(context).textTheme.bodySmall),
                     ])),
@@ -501,17 +521,18 @@ class _DownloadTaskTile extends StatelessWidget {
                       child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                        Text('${task.entry.title} ${task.episode.name}',
+                        LocalizedText(
+                            '${task.entry.title} ${task.episode.name}',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style:
                                 const TextStyle(fontWeight: FontWeight.w600)),
                         const SizedBox(height: 4),
-                        Text(
+                        LocalizedText(
                             '${task.status} · ${_bytes(task.bytes)}${task.total > 0 && !task.completed ? ' / ${_bytes(task.total)}' : ''}',
                             style: Theme.of(context).textTheme.bodySmall),
                         const SizedBox(height: 4),
-                        Text('观看进度：${progress.label}',
+                        LocalizedText('观看进度：${progress.label}',
                             key: ValueKey('watch-progress-${task.id}'),
                             style: Theme.of(context).textTheme.bodySmall),
                         if (!task.completed) ...[
@@ -522,13 +543,13 @@ class _DownloadTaskTile extends StatelessWidget {
                                   : (task.percent / 100).clamp(0.0, 1.0)),
                         ],
                         if (task.state == 'failed')
-                          Text(task.failureMessage,
+                          LocalizedText(task.failureMessage,
                               style: TextStyle(
                                   fontSize: 12,
                                   color: Theme.of(context).colorScheme.error)),
                       ])),
                   PopupMenuButton<String>(
-                      tooltip: '管理${task.episode.name}',
+                      tooltip: uiText(context, '管理${task.episode.name}'),
                       enabled: !busy && task.state != 'removing',
                       onSelected: (action) {
                         if (action == 'play') {
@@ -540,18 +561,18 @@ class _DownloadTaskTile extends StatelessWidget {
                       itemBuilder: (_) => [
                             if (task.completed)
                               const PopupMenuItem(
-                                  value: 'play', child: Text('离线播放')),
+                                  value: 'play', child: LocalizedText('离线播放')),
                             if (task.active)
                               const PopupMenuItem(
-                                  value: 'pause', child: Text('暂停')),
+                                  value: 'pause', child: LocalizedText('暂停')),
                             if (task.state == 'paused')
                               const PopupMenuItem(
-                                  value: 'resume', child: Text('继续')),
+                                  value: 'resume', child: LocalizedText('继续')),
                             if (task.state == 'failed')
                               const PopupMenuItem(
-                                  value: 'retry', child: Text('重试')),
+                                  value: 'retry', child: LocalizedText('重试')),
                             const PopupMenuItem(
-                                value: 'remove', child: Text('删除')),
+                                value: 'remove', child: LocalizedText('删除')),
                           ]),
                 ]))),
         const Divider(height: 1),

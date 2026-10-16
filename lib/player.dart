@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'catalog.dart';
+import 'ui_locale.dart';
 import 'download_widgets.dart';
 import 'library.dart';
 
@@ -683,13 +684,13 @@ class _PlayerPageState extends State<PlayerPage> {
     if (mounted) widget.onChooseSource?.call();
   }
 
-  void _explainSingleLine() => ScaffoldMessenger.of(context)
-      .showSnackBar(const SnackBar(content: Text('当前只有一条播放线路；可点右侧“换源”查找其他来源')));
+  void _explainSingleLine() => ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: LocalizedText('当前只有一条播放线路；可点右侧“换源”查找其他来源')));
 
   Widget _overlayButton(
           String tooltip, IconData icon, VoidCallback? onPressed) =>
       IconButton(
-        tooltip: tooltip,
+        tooltip: uiText(context, tooltip),
         icon: Icon(icon,
             size: 21, color: onPressed == null ? Colors.white38 : Colors.white),
         onPressed: onPressed,
@@ -719,12 +720,12 @@ class _PlayerPageState extends State<PlayerPage> {
         if (loading) const Center(child: CircularProgressIndicator()),
         if (error != null)
           Center(
-              child: Text(error!,
+              child: LocalizedText(error!,
                   style: const TextStyle(color: Colors.white),
                   textAlign: TextAlign.center)),
         if (_completed)
           Center(
-              child: Text(next == null ? '本线路已播完' : '本集已播完',
+              child: LocalizedText(next == null ? '本线路已播完' : '本集已播完',
                   style: const TextStyle(color: Colors.white))),
         if (_holdingFast || _scrubMs != null)
           Center(
@@ -734,7 +735,7 @@ class _PlayerPageState extends State<PlayerPage> {
                       borderRadius: BorderRadius.circular(8)),
                   child: Padding(
                       padding: const EdgeInsets.all(8),
-                      child: Text(
+                      child: LocalizedText(
                           _scrubMs != null
                               ? '${_time(progress)} / ${_time(durationMs)}'
                               : '长按 2.0x 播放',
@@ -754,12 +755,12 @@ class _PlayerPageState extends State<PlayerPage> {
                               alignment: WrapAlignment.center,
                               crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
-                                Text('$_autoNextSeconds 秒后播放下一集',
+                                LocalizedText('$_autoNextSeconds 秒后播放下一集',
                                     style: const TextStyle(
                                         color: Colors.white, fontSize: 12)),
                                 TextButton(
                                     onPressed: _cancelAutoNext,
-                                    child: const Text('取消续播')),
+                                    child: const LocalizedText('取消续播')),
                               ]))))),
         if (_controlsVisible) ...[
           Positioned(
@@ -790,7 +791,7 @@ class _PlayerPageState extends State<PlayerPage> {
                                 fontSize: 12, color: Colors.white)))),
                 if (lines.length > 1)
                   PopupMenuButton<String>(
-                    tooltip: '切换线路',
+                    tooltip: uiText(context, '切换线路'),
                     enabled: !selecting,
                     onSelected: _changeLine,
                     itemBuilder: (_) => [
@@ -879,7 +880,7 @@ class _PlayerPageState extends State<PlayerPage> {
                         child: FittedBox(
                             fit: BoxFit.scaleDown,
                             alignment: Alignment.centerLeft,
-                            child: Text(
+                            child: LocalizedText(
                                 '${_time(progress)} / ${_time(durationMs)}',
                                 style: const TextStyle(
                                     color: Colors.white, fontSize: 11)))),
@@ -890,19 +891,20 @@ class _PlayerPageState extends State<PlayerPage> {
                             ? () => unawaited(_select(next, startMs: 0))
                             : null),
                     PopupMenuButton<double>(
-                      tooltip: '倍速',
+                      tooltip: uiText(context, '倍速'),
                       enabled: ready,
                       initialValue: rate,
                       onSelected: (value) => unawaited(_changeRate(value)),
                       itemBuilder: (_) => [
                         for (final value in [0.5, 1.0, 1.25, 1.5, 2.0, 3.0])
-                          PopupMenuItem(value: value, child: Text('${value}x')),
+                          PopupMenuItem(
+                              value: value, child: LocalizedText('${value}x')),
                       ],
                       child: SizedBox(
                           width: 42,
                           height: 36,
                           child: Center(
-                              child: Text('${rate}x',
+                              child: LocalizedText('${rate}x',
                                   style: const TextStyle(
                                       color: Colors.white, fontSize: 11)))),
                     ),
@@ -935,7 +937,8 @@ class _PlayerPageState extends State<PlayerPage> {
       if (error != null)
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Text(error!, style: const TextStyle(color: Colors.red)),
+          child:
+              LocalizedText(error!, style: const TextStyle(color: Colors.red)),
         ),
       if (line != null) ...[
         const SizedBox(height: 12),
@@ -952,19 +955,19 @@ class _PlayerPageState extends State<PlayerPage> {
             onPressed:
                 ready && !selecting ? () => unawaited(_openOriginal()) : null,
             icon: const Icon(Icons.open_in_new),
-            label: const Text('返回原资源'),
+            label: const LocalizedText('返回原资源'),
           ),
         TextButton.icon(
           onPressed: episode == null ? null : _download,
           icon: const Icon(Icons.download_outlined),
-          label: const Text('下载剧集'),
+          label: const LocalizedText('下载剧集'),
         ),
         if (episode != null &&
             widget.library.downloadedFile(widget.entry.id, episode!) != null)
           TextButton.icon(
             onPressed: ready ? () => _select(episode, local: true) : null,
             icon: const Icon(Icons.offline_pin_outlined),
-            label: const Text('播放已下载文件'),
+            label: const LocalizedText('播放已下载文件'),
           ),
       ]),
       if (!widget.embedded) const Divider(),
@@ -1087,25 +1090,38 @@ class _EpisodeStripState extends State<_EpisodeStrip> {
   @override
   Widget build(BuildContext context) =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Container(
-              width: 3,
-              height: 16,
-              color: Theme.of(context).colorScheme.primary),
-          const SizedBox(width: 8),
-          const Text('选集',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-          const Spacer(),
-          Tooltip(
-              message: '全部剧集',
-              child: TextButton(
-                  onPressed: widget.episodes.isEmpty ? null : widget.onShowAll,
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Text('全部 ${widget.episodes.length} 集',
-                        style: const TextStyle(fontSize: 12)),
-                    const Icon(Icons.chevron_right, size: 18),
-                  ]))),
-        ]),
+        Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                Container(
+                    width: 3,
+                    height: 16,
+                    color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 8),
+                const Flexible(
+                    child: LocalizedText('选集',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600))),
+              ]),
+              Tooltip(
+                  message: uiText(context, '全部剧集'),
+                  child: TextButton(
+                      onPressed:
+                          widget.episodes.isEmpty ? null : widget.onShowAll,
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Flexible(
+                            child: LocalizedText(
+                                '全部 ${widget.episodes.length} 集',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12))),
+                        const Icon(Icons.chevron_right, size: 18),
+                      ]))),
+            ]),
         SizedBox(
             height: _episodeTileHeight(context),
             child: ListView.separated(
@@ -1190,31 +1206,35 @@ class _EpisodeSheetState extends State<_EpisodeSheet> {
             child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                 child: Column(children: [
-                  Row(children: [
-                    Expanded(
-                        child: Text('全部剧集',
+                  Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        LocalizedText('全部剧集',
                             style: Theme.of(context)
                                 .textTheme
                                 .titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w600))),
-                    Tooltip(
-                        message: _descending ? '切换正序' : '切换倒序',
-                        child: TextButton.icon(
-                            onPressed: () {
-                              setState(() => _descending = !_descending);
-                              if (_scroll.hasClients) _scroll.jumpTo(0);
-                            },
-                            icon: Icon(
-                                _descending
-                                    ? Icons.arrow_upward
-                                    : Icons.arrow_downward,
-                                size: 16),
-                            label: Text(_descending ? '倒序' : '正序'))),
-                    IconButton(
-                        tooltip: '关闭全部剧集',
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close, size: 22)),
-                  ]),
+                                ?.copyWith(fontWeight: FontWeight.w600)),
+                        Tooltip(
+                            message:
+                                uiText(context, _descending ? '切换正序' : '切换倒序'),
+                            child: TextButton.icon(
+                                onPressed: () {
+                                  setState(() => _descending = !_descending);
+                                  if (_scroll.hasClients) _scroll.jumpTo(0);
+                                },
+                                icon: Icon(
+                                    _descending
+                                        ? Icons.arrow_upward
+                                        : Icons.arrow_downward,
+                                    size: 16),
+                                label:
+                                    LocalizedText(_descending ? '倒序' : '正序'))),
+                        IconButton(
+                            tooltip: uiText(context, '关闭全部剧集'),
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close, size: 22)),
+                      ]),
                   const SizedBox(height: 8),
                   Expanded(
                       child: GridView.builder(

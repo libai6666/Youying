@@ -135,19 +135,20 @@ void main() {
     }
   });
 
-  test('first load seeds seven checked presets and no retired endpoints',
+  test('first load seeds eight checked presets and no retired endpoints',
       () async {
     final library = await Library.open();
-    expect(sourcePresets, hasLength(7));
+    expect(sourcePresets, hasLength(8));
     expect(sourcePresets.where((p) => p.introducedIn == 2), hasLength(5));
     expect(library.sources.length, sourcePresets.length);
     expect(library.enabledSources, library.sources);
-    expect(library.sources.map((s) => s.url).toSet(), hasLength(7));
-    expect(library.sources.map((s) => s.name).toSet(), hasLength(7));
+    expect(library.sources.map((s) => s.url).toSet(), hasLength(8));
+    expect(library.sources.map((s) => s.name).toSet(), hasLength(8));
     expect(library.sources.any((s) => retiredSourcePresetUrls.contains(s.url)),
         false);
     expect(store.values['public_sources_initialized_v1'], true);
     expect(store.values['public_sources_initialized_v2'], true);
+    expect(store.values['public_sources_initialized_v3'], true);
     expect((await Library.open()).sources.length, sourcePresets.length);
     for (final preset in sourcePresets) {
       expect(SourceEndpoint.parseHttps(preset.source.url).scheme, 'https');
@@ -219,6 +220,7 @@ void main() {
     expect(store.values['sources'], 'corrupt');
     expect(store.values.containsKey('public_sources_initialized_v1'), false);
     expect(store.values.containsKey('public_sources_initialized_v2'), false);
+    expect(store.values.containsKey('public_sources_initialized_v3'), false);
   });
 
   test('v1 upgrade retires failed URLs without restoring deleted v1 presets',
@@ -238,7 +240,7 @@ void main() {
     store.values['positions'] = '{"saved":1234}';
     store.values['downloads'] = '{"saved":"/local/video.mp4"}';
     var library = await Library.open();
-    expect(library.sources, hasLength(7));
+    expect(library.sources, hasLength(8));
     expect(library.sources.first.enabled, false);
     expect(library.sources.any((s) => s.name == '极速资源'), false);
     expect(library.sources.any((s) => retiredSourcePresetUrls.contains(s.url)),
@@ -251,18 +253,17 @@ void main() {
     expect(library.downloads['saved'], '/local/video.mp4');
     await library.removeSource(library.sources.last);
     library = await Library.open();
-    expect(library.sources, hasLength(6));
+    expect(library.sources, hasLength(7));
   });
 
-  test('v1 empty configuration receives only the five new presets once',
-      () async {
+  test('v1 empty configuration receives later presets once', () async {
     store.values['public_sources_initialized_v1'] = true;
     store.values['sources'] = '[]';
     final library = await Library.open();
     expect(
         library.sources.map((s) => s.url),
         sourcePresets
-            .where((p) => p.introducedIn == 2)
+            .where((p) => p.introducedIn > 1)
             .map((p) => p.source.url));
     for (final source in List.of(library.sources)) {
       await library.removeSource(source);
@@ -287,11 +288,11 @@ void main() {
       },
     ]);
     final library = await Library.open();
-    expect(library.sources, hasLength(5));
+    expect(library.sources, hasLength(6));
     expect(library.sources.first.url, 'https://custom.example/api');
     expect(library.sources[1].name, 'custom alias');
     expect(library.sources.take(2).every((s) => !s.enabled), true);
-    expect((await Library.open()).sources, hasLength(5));
+    expect((await Library.open()).sources, hasLength(6));
   });
 
   test('v1 upgrade does not overwrite corrupt state or mark migration complete',
@@ -318,7 +319,33 @@ void main() {
     expect(store.values['sources'], previous);
     expect(store.values.containsKey('public_sources_initialized_v2'), false);
     store.failWrites = false;
-    expect((await Library.open()).sources, hasLength(5));
+    expect((await Library.open()).sources, hasLength(6));
+  });
+
+  test('v3 migration respects a deliberately empty v2 source list', () async {
+    store.values['public_sources_initialized_v1'] = true;
+    store.values['public_sources_initialized_v2'] = true;
+    store.values['sources'] = '[]';
+    expect((await Library.open()).sources, isEmpty);
+    expect(store.values['public_sources_initialized_v3'], true);
+  });
+
+  test(
+      'v3 adds only the new preset without restoring removed or disabled sources',
+      () async {
+    store.values['public_sources_initialized_v1'] = true;
+    store.values['public_sources_initialized_v2'] = true;
+    store.values['sources'] = jsonEncode([
+      sourcePresets.first.source.withEnabled(false).toJson(),
+      {'name': 'custom', 'url': 'https://custom.example/api', 'enabled': false},
+    ]);
+    final library = await Library.open();
+    expect(library.sources, hasLength(3));
+    expect(library.sources.take(2).every((source) => !source.enabled), true);
+    expect(library.sources.last.name, '魔都资源');
+    expect(library.sources.any((source) => source.name == '极速资源'), false);
+    await library.removeSource(library.sources.last);
+    expect((await Library.open()).sources, hasLength(2));
   });
 
   test('failed persistence does not change the source list', () async {

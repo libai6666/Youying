@@ -403,18 +403,83 @@ class CatalogGroup {
       .withArtworkFrom(entries);
 }
 
+final _dubSuffix = RegExp(r'[（(\[]?(?:国语|粤语|普通话)(?:版)?[）)\]]?$');
+
+String catalogWorkTitle(String title) =>
+    title.trim().replaceFirst(_dubSuffix, '').trim();
+
+Set<String> _catalogCast(String actors) => actors
+    .split(RegExp(r'[,，、/|;；]+'))
+    .map(catalogTitle)
+    .where((name) => name.isNotEmpty && name != '未知')
+    .toSet();
+
+String _catalogYear(String year) =>
+    RegExp(r'^(?:19|20|21)\d{2}(?:年)?$').hasMatch(year.trim())
+        ? year.trim().substring(0, 4)
+        : '';
+
+bool sameCatalogWork(MediaEntry a, MediaEntry b) {
+  if (a.id == b.id) return true;
+  final title = catalogTitle(catalogWorkTitle(a.title));
+  final kind = catalogKind(a.category);
+  if (title.isEmpty ||
+      title != catalogTitle(catalogWorkTitle(b.title)) ||
+      kind.isEmpty ||
+      kind != catalogKind(b.category)) {
+    return false;
+  }
+  final director = catalogTitle(a.director);
+  final otherDirector = catalogTitle(b.director);
+  if (director.isNotEmpty &&
+      otherDirector.isNotEmpty &&
+      director != otherDirector) {
+    return false;
+  }
+  final actors = _catalogCast(a.actors);
+  final otherActors = _catalogCast(b.actors);
+  final shared = actors.intersection(otherActors);
+  if (actors.isNotEmpty && otherActors.isNotEmpty && shared.isEmpty) {
+    return false;
+  }
+  final year = _catalogYear(a.year);
+  if (catalogTitle(a.title) == catalogTitle(b.title) &&
+      year.isNotEmpty &&
+      year == _catalogYear(b.year)) {
+    return true;
+  }
+  return director.isNotEmpty &&
+      director != '未知' &&
+      director == otherDirector &&
+      shared.length >= 2;
+}
+
 List<CatalogGroup> groupCatalog(Iterable<MediaEntry> entries,
     {String query = ''}) {
-  final groups = <String, CatalogGroup>{};
+  final buckets = <String, List<CatalogGroup>>{};
+  final result = <CatalogGroup>[];
   final seen = <String>{};
   for (final entry in entries) {
     if (!seen.add(entry.id)) continue;
-    groups
-        .putIfAbsent(catalogIdentity(entry), () => CatalogGroup([]))
-        .entries
-        .add(entry);
+    final key = jsonEncode([
+      catalogTitle(catalogWorkTitle(entry.title)),
+      catalogKind(entry.category),
+    ]);
+    final bucket = buckets.putIfAbsent(key, () => []);
+    CatalogGroup? match;
+    for (final group in bucket) {
+      if (group.entries.every((other) => sameCatalogWork(other, entry))) {
+        match = group;
+        break;
+      }
+    }
+    if (match == null) {
+      match = CatalogGroup([]);
+      bucket.add(match);
+      result.add(match);
+    }
+    match.entries.add(entry);
   }
-  final result = groups.values.toList();
   if (query.trim().isNotEmpty) {
     final keyword = catalogTitle(query);
     int rank(CatalogGroup group) {

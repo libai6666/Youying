@@ -128,6 +128,7 @@ List<String> catalogGenreOptions(String label) =>
     };
 
 class DirectoryFeed {
+  final Map<String, Map<int, List<MediaEntry>>> _pages = {};
   final List<MediaEntry> rawEntries = [];
   List<CatalogGroup> groups = [];
   bool loading = false;
@@ -136,12 +137,28 @@ class DirectoryFeed {
   final Map<String, String> issues = {};
   String? error;
   List<MediaEntry> get entries => groups.map((g) => g.primary).toList();
+
+  void _rebuild() {
+    final entries = <String, MediaEntry>{};
+    for (final pages in _pages.values) {
+      for (final page in pages.keys.toList()..sort()) {
+        for (final entry in pages[page]!) {
+          entries.putIfAbsent(entry.id, () => entry);
+        }
+      }
+    }
+    rawEntries
+      ..clear()
+      ..addAll(entries.values);
+    groups = groupCatalog(rawEntries);
+  }
 }
 
 class _Partition {
   _Partition(this.source, this.categoryId);
   final SourceEndpoint source;
   final String categoryId;
+  String get key => jsonEncode([source.name, source.url, categoryId]);
   int page = 0;
   bool hasMore = true;
 }
@@ -239,11 +256,18 @@ class DirectoryController extends ChangeNotifier {
 
   Future<void> refresh() async {
     final generation = ++_generation;
-    _sources = List.of(library.enabledSources);
-    _categories.clear();
+    final sources = List.of(library.enabledSources);
+    if (jsonEncode(_sources.map((s) => s.toJson()).toList()) !=
+        jsonEncode(sources.map((s) => s.toJson()).toList())) {
+      _categories.clear();
+      feeds.clear();
+    }
+    _sources = sources;
+    for (final feed in feeds.values) {
+      feed.loading = false;
+    }
     _queues.clear();
     sourceIssues.clear();
-    feeds.clear();
     loadingCategories = hasSources;
     notifyListeners();
     await _parallel(_sources, (source) async {
@@ -257,11 +281,16 @@ class DirectoryController extends ChangeNotifier {
     });
     if (!_active(generation)) return;
     loadingCategories = false;
+    for (final item in feeds.entries) {
+      final validKeys = _partitions(item.key).map((p) => p.key).toSet();
+      item.value._pages.removeWhere((key, _) => !validKeys.contains(key));
+      item.value._rebuild();
+    }
     notifyListeners();
     // Labels are loaded sequentially to bound network concurrency on phones.
     for (final label in _requested.toList()) {
       if (!_active(generation)) return;
-      await loadLabel(label);
+      await loadLabel(label, reload: true);
     }
   }
 
@@ -281,10 +310,8 @@ class DirectoryController extends ChangeNotifier {
         ];
       });
 
-  bool supports(String label) =>
-      !loadingCategories &&
-      _sources.any((source) => directoryCategories(
-              _categories[source.url] ?? [], directoryLabel(label))
+  bool supports(String label) => _sources.any((source) =>
+      directoryCategories(_categories[source.url] ?? [], directoryLabel(label))
           .isNotEmpty);
   DirectoryFeed? feedFor(String label) => feeds[directoryLabel(label)];
 
@@ -296,12 +323,12 @@ class DirectoryController extends ChangeNotifier {
   }
 
   Future<void> loadLabel(String label,
-      {bool more = false, bool retry = false}) async {
+      {bool more = false, bool retry = false, bool reload = false}) async {
     label = directoryLabel(label);
     if (loadingCategories || !hasSources || _disposed) return;
     final feed = feeds.putIfAbsent(label, DirectoryFeed.new);
     if (feed.loading ||
-        (feed.loaded && !more && !retry) ||
+        (feed.loaded && !more && !retry && !reload) ||
         (more && !feed.hasMore && !retry)) {
       return;
     }
@@ -342,7 +369,6 @@ class DirectoryController extends ChangeNotifier {
       }
     });
     if (!_active(generation)) return;
-    final ids = feed.rawEntries.map((entry) => entry.id).toSet();
     for (final partition in batch) {
       final key = '${partition.source.name}:${partition.categoryId}';
       final listing = results[partition];
@@ -352,13 +378,15 @@ class DirectoryController extends ChangeNotifier {
         partition.page = listing.page;
         partition.hasMore = listing.hasMore;
         feed.issues.remove(key);
-        for (final entry in listing.entries) {
-          if (ids.add(entry.id)) feed.rawEntries.add(entry);
+        final pages = feed._pages.putIfAbsent(partition.key, () => {});
+        pages[partition.page] = listing.entries;
+        if (!listing.hasMore) {
+          pages.removeWhere((page, _) => page > partition.page);
         }
       }
       if (partition.hasMore) queue.add(partition);
     }
-    feed.groups = groupCatalog(feed.rawEntries);
+    feed._rebuild();
     feed.loaded = true;
     feed.hasMore = queue.isNotEmpty;
     feed.error = failed.length == batch.length ? '本批内容加载失败，请重试' : null;
@@ -367,16 +395,10 @@ class DirectoryController extends ChangeNotifier {
   }
 
   List<MediaEntry> variantsFor(MediaEntry entry) {
-    final identity = catalogIdentity(entry);
-    final matches = <String, MediaEntry>{entry.id: entry};
-    for (final feed in feeds.values) {
-      for (final candidate in feed.rawEntries) {
-        if (catalogIdentity(candidate) == identity) {
-          matches[candidate.id] = candidate;
-        }
-      }
-    }
-    return matches.values.toList();
+    return groupCatalog([
+      entry,
+      for (final feed in feeds.values) ...feed.rawEntries,
+    ]).first.entries;
   }
 
   @override

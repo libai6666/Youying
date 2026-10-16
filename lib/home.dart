@@ -30,6 +30,8 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   late final DirectoryController browse =
       DirectoryController(widget.library, client: widget.browseClient);
+  late final ArtworkResolver artwork =
+      ArtworkResolver(browse.client, () => widget.library.enabledSources);
   int selected = 0;
   String category = '首页';
   String ranking = '电视剧';
@@ -44,6 +46,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    artwork.dispose();
     browse.dispose();
     super.dispose();
   }
@@ -51,8 +54,8 @@ class _HomePageState extends State<HomePage> {
   void _open(String title, Widget child) => Navigator.push<void>(
       context,
       MaterialPageRoute(
-          builder: (_) =>
-              Scaffold(appBar: AppBar(title: Text(title)), body: child)));
+          builder: (_) => Scaffold(
+              appBar: AppBar(title: LocalizedText(title)), body: child)));
   void _search() => _open('搜索', SearchPage(library: widget.library));
   void _settings() => _open('设置', SettingsPage(library: widget.library));
   void _history() => _open('观看历史', _SavedEntries(library: widget.library));
@@ -113,13 +116,16 @@ class _HomePageState extends State<HomePage> {
               unselectedFontSize: 10,
               type: BottomNavigationBarType.fixed,
               elevation: 0,
-              items: const [
+              items: [
                 BottomNavigationBarItem(
-                    icon: Icon(Icons.home_filled), label: '首页'),
+                    icon: const Icon(Icons.home_filled),
+                    label: uiText(context, '首页')),
                 BottomNavigationBarItem(
-                    icon: Icon(Icons.bar_chart), label: '排行榜'),
+                    icon: const Icon(Icons.bar_chart),
+                    label: uiText(context, '排行榜')),
                 BottomNavigationBarItem(
-                    icon: Icon(Icons.account_circle), label: '我的'),
+                    icon: const Icon(Icons.account_circle),
+                    label: uiText(context, '我的')),
               ],
             ),
           ),
@@ -128,13 +134,11 @@ class _HomePageState extends State<HomePage> {
 
   Widget _sourcePicker({bool dark = false}) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        child: Row(children: [
-          Expanded(
-              child: Text('多源聚合 · ${widget.library.enabledSources.length} 个来源',
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 11, color: dark ? Colors.white70 : _muted))),
-          Text(selected == 1 ? '聚合更新顺序 · 非热度榜' : '更新推荐 · 非平台热度',
+        child: Wrap(spacing: 8, runSpacing: 4, children: [
+          LocalizedText('多源聚合 · ${widget.library.enabledSources.length} 个来源',
+              style: TextStyle(
+                  fontSize: 11, color: dark ? Colors.white70 : _muted)),
+          LocalizedText(selected == 1 ? '聚合更新顺序 · 非热度榜' : '更新推荐 · 非平台热度',
               style: TextStyle(
                   fontSize: 10, color: dark ? Colors.white70 : _muted)),
         ]),
@@ -157,17 +161,20 @@ class _HomePageState extends State<HomePage> {
                       child: Row(children: [
                         Icon(Icons.search, size: 20, color: Color(0xff777777)),
                         SizedBox(width: 8),
-                        Text('请输入关键字',
-                            style: TextStyle(fontSize: 13, color: _muted))
+                        Expanded(
+                            child: LocalizedText('请输入关键字',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 13, color: _muted)))
                       ])),
                 ),
               )),
               IconButton(
-                  tooltip: '我的下载',
+                  tooltip: uiText(context, '我的下载'),
                   onPressed: _downloads,
                   icon: const Icon(Icons.downloading_outlined, size: 24)),
               IconButton(
-                  tooltip: '观看历史',
+                  tooltip: uiText(context, '观看历史'),
                   onPressed: _history,
                   icon: const Icon(Icons.history, size: 24)),
             ])),
@@ -205,8 +212,9 @@ class _HomePageState extends State<HomePage> {
             child: _Spotlight(
                 key: ValueKey(entries.first.id),
                 entries: entries.take(5).toList(),
+                artwork: artwork,
                 onTap: _detail)),
-      if (browse.loadingCategories) const _FeedLoading(),
+      if (browse.loadingCategories && entries.isEmpty) const _FeedLoading(),
       if (browse.categoryError != null)
         _Feedback(
             message: browse.categoryError!,
@@ -221,14 +229,14 @@ class _HomePageState extends State<HomePage> {
       if (browse.sourceIssues.isNotEmpty)
         ExpansionTile(
             key: const PageStorageKey('home-source-issues'),
-            title: const Text('部分内容来源暂时不可用',
+            title: const LocalizedText('部分内容来源暂时不可用',
                 style: TextStyle(fontSize: 12, color: _muted)),
             children: [
               for (final issue in browse.sourceIssues.entries)
                 ListTile(
                     dense: true,
-                    title: Text(issue.key),
-                    subtitle: Text(issue.value))
+                    title: LocalizedText(issue.key),
+                    subtitle: LocalizedText(issue.value))
             ]),
     ];
   }
@@ -239,7 +247,7 @@ class _HomePageState extends State<HomePage> {
       _SectionHeader(
           title: title,
           onTap: () => _selectCategory(label == '动漫' ? '二次元动漫' : label)),
-      if (feed?.loading == true) const _FeedLoading(),
+      if (feed?.loading == true && feed!.entries.isEmpty) const _FeedLoading(),
       if (feed?.error != null)
         _Feedback(
             message: feed!.error!,
@@ -249,12 +257,18 @@ class _HomePageState extends State<HomePage> {
         if (feed!.entries.isEmpty)
           const _Feedback(message: '暂未取得内容，可在更多中继续加载')
         else
-          _PosterStrip(entries: feed.entries.take(10).toList(), onTap: _detail),
+          _PosterStrip(
+              entries: feed.entries.take(10).toList(),
+              artwork: artwork,
+              onTap: _detail),
     ]);
   }
 
   Widget _categoryContent(String label, {bool ranked = false}) {
-    if (browse.loadingCategories) return const _FeedLoading();
+    final feed = browse.feedFor(label);
+    if (browse.loadingCategories && feed?.loaded != true) {
+      return const _FeedLoading();
+    }
     if (browse.categoryError != null) {
       return _Feedback(
           message: browse.categoryError!, action: '重试', onTap: browse.refresh);
@@ -263,7 +277,6 @@ class _HomePageState extends State<HomePage> {
       return _Feedback(
           message: label == '电视直播' ? '当前为点播源，未接入电视直播' : '已启用来源未提供“$label”分类');
     }
-    final feed = browse.feedFor(label);
     if (feed == null) {
       return _Feedback(
           message: '点击加载该分类',
@@ -279,20 +292,23 @@ class _HomePageState extends State<HomePage> {
         for (final entry in entries)
           Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: _CatalogCard(entry: entry, onTap: () => _detail(entry)))
+              child: _CatalogCard(
+                  entry: entry, artwork: artwork, onTap: () => _detail(entry)))
       else
         Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: LayoutBuilder(builder: (context, constraints) {
-              final columns = (constraints.maxWidth / 110).floor().clamp(3, 6);
+              const columns = 5;
               final width =
-                  (constraints.maxWidth - (columns - 1) * 8) / columns;
-              return Wrap(spacing: 8, runSpacing: 14, children: [
+                  (constraints.maxWidth - (columns - 1) * 4) / columns;
+              return Wrap(spacing: 4, runSpacing: 14, children: [
                 for (final entry in entries)
                   SizedBox(
                       width: width,
                       child: _PosterTile(
-                          entry: entry, onTap: () => _detail(entry))),
+                          entry: entry,
+                          artwork: artwork,
+                          onTap: () => _detail(entry))),
               ]);
             })),
       if (feed.loading) const _FeedLoading(),
@@ -313,16 +329,17 @@ class _HomePageState extends State<HomePage> {
         ExpansionTile(
             key: PageStorageKey(
                 'source-issues-${ranked ? 'ranking' : 'home'}-$label'),
-            title: const Text('部分来源加载失败', style: TextStyle(fontSize: 12)),
+            title:
+                const LocalizedText('部分来源加载失败', style: TextStyle(fontSize: 12)),
             children: [
               TextButton(
                   onPressed: () => browse.loadLabel(label, retry: true),
-                  child: const Text('重试未完成来源'))
+                  child: const LocalizedText('重试未完成来源'))
             ]),
       if (!feed.loading && feed.error == null && feed.hasMore)
         TextButton(
             onPressed: () => browse.loadLabel(label, more: true),
-            child: const Text('加载更多')),
+            child: const LocalizedText('加载更多')),
     ]);
   }
 
@@ -333,8 +350,8 @@ class _HomePageState extends State<HomePage> {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(children: [
             SizedBox(
-                width: 32,
-                child: Text(label,
+                width: 65,
+                child: LocalizedText(label,
                     style: const TextStyle(fontSize: 11, color: _muted))),
             Expanded(
                 child: SingleChildScrollView(
@@ -345,7 +362,8 @@ class _HomePageState extends State<HomePage> {
                             padding: const EdgeInsets.only(right: 3),
                             child: ChoiceChip(
                               key: ValueKey('filter-$category-$label-$value'),
-                              label: Text(value.isEmpty ? '全部' : value),
+                              label:
+                                  LocalizedText(value.isEmpty ? '全部' : value),
                               selected: selected == value,
                               showCheckmark: false,
                               onSelected: disabled.contains(value)
@@ -475,23 +493,24 @@ class _HomePageState extends State<HomePage> {
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('筛选当前已加载 ${feed.entries.length} 部 · 匹配 $count 部',
+                    LocalizedText(
+                        '筛选当前已加载 ${feed.entries.length} 部 · 匹配 $count 部',
                         style: const TextStyle(fontSize: 11, color: _muted)),
-                    const Text('加载更多可继续筛选；最新按来源更新时间，非小柚子同源片单。',
+                    const LocalizedText('加载更多可继续筛选；最新按来源更新时间，非小柚子同源片单。',
                         style: TextStyle(fontSize: 10, color: _muted)),
                     if (!hot || !rated)
-                      Text(
+                      LocalizedText(
                           '${[
                             if (!hot) '热度',
                             if (!rated) '评分'
                           ].join('、')}暂无可用数据，对应排序暂不可用',
                           style: const TextStyle(fontSize: 10, color: _muted)),
                     if (filters.order == CatalogOrder.popular)
-                      const Text('按来源点击量排序，不是平台热度榜',
+                      const LocalizedText('按来源点击量排序，不是平台热度榜',
                           style: TextStyle(fontSize: 10, color: _muted)),
                     TextButton(
                         onPressed: () => change(const CatalogFilters()),
-                        child: const Text('重置筛选')),
+                        child: const LocalizedText('重置筛选')),
                   ])),
         ]));
   }
@@ -536,7 +555,7 @@ class _HomePageState extends State<HomePage> {
                       ? Colors.white
                       : (label == current ? _ink : const Color(0xff666666)),
                 ),
-                child: Text(label,
+                child: LocalizedText(label,
                     style: TextStyle(
                         fontSize: label == current ? 16 : 14,
                         fontWeight: label == current
@@ -561,11 +580,11 @@ class _HomePageState extends State<HomePage> {
                       color: Color(0xffbbbbbb), size: 50))),
           const SizedBox(height: 10),
           const Center(
-              child: Text('本地观影',
+              child: LocalizedText('本地观影',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold))),
           const SizedBox(height: 5),
           const Center(
-              child: Text('收藏与历史仅保存在本机',
+              child: LocalizedText('收藏与历史仅保存在本机',
                   style: TextStyle(color: _muted, fontSize: 11))),
           const SizedBox(height: 22),
           _whitePanel(
@@ -574,7 +593,7 @@ class _HomePageState extends State<HomePage> {
             if (recent.isEmpty)
               const Padding(
                   padding: EdgeInsets.only(bottom: 20),
-                  child: Text('还没有观看记录，去首页发现喜欢的内容吧',
+                  child: LocalizedText('还没有观看记录，去首页发现喜欢的内容吧',
                       style: TextStyle(color: _muted, fontSize: 12)))
             else
               SizedBox(
@@ -593,7 +612,8 @@ class _HomePageState extends State<HomePage> {
                         return SizedBox(
                             width: 128,
                             child: Tooltip(
-                                message: widget.library.watchSummary(entry),
+                                message: uiText(context,
+                                    widget.library.watchSummary(entry)),
                                 child: InkWell(
                                     onTap: () => _detail(entry),
                                     child: Column(children: [
@@ -606,7 +626,9 @@ class _HomePageState extends State<HomePage> {
                                               child: Stack(
                                                   fit: StackFit.expand,
                                                   children: [
-                                                    _Poster(entry: entry),
+                                                    _Poster(
+                                                        entry: entry,
+                                                        artwork: artwork),
                                                     if (episode != null)
                                                       Positioned(
                                                           right: 4,
@@ -621,7 +643,7 @@ class _HomePageState extends State<HomePage> {
                                                                   borderRadius:
                                                                       BorderRadius.circular(
                                                                           3)),
-                                                              child: Text(
+                                                              child: LocalizedText(
                                                                   progress.completed
                                                                       ? '已看完'
                                                                       : WatchProgress.time(
@@ -656,7 +678,7 @@ class _HomePageState extends State<HomePage> {
                                           overflow: TextOverflow.ellipsis,
                                           style: const TextStyle(
                                               fontSize: 10, color: _muted)),
-                                      Text(
+                                      LocalizedText(
                                           episode == null
                                               ? '暂无分集进度'
                                               : progress.completed
@@ -693,26 +715,28 @@ class _HomePageState extends State<HomePage> {
                   () => showDialog<void>(
                       context: context,
                       builder: (_) => AlertDialog(
-                            title: const Text('柚影'),
-                            content: const Text(
+                            title: const LocalizedText('柚影'),
+                            content: const LocalizedText(
                                 '独立媒体客户端。无账号、无广告。\n内容由第三方源提供，请仅访问有权使用的内容。\n当前排行榜为源更新列表，不代表真实热度。'),
                             actions: [
                               TextButton(
                                   onPressed: () => Navigator.pop(context),
-                                  child: const Text('知道了'))
+                                  child: const LocalizedText('知道了'))
                             ],
                           ))
                 ),
               ];
               return Wrap(children: [
                 for (final (label, icon, action) in actions)
-                  SizedBox(
+                  Container(
                       width: constraints.maxWidth / 4,
-                      height: 84,
+                      constraints: const BoxConstraints(minHeight: 84),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                       child: InkWell(
                           onTap: action,
                           borderRadius: BorderRadius.circular(8),
                           child: Column(
+                              mainAxisSize: MainAxisSize.min,
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 Icon(icon,
@@ -721,7 +745,10 @@ class _HomePageState extends State<HomePage> {
                                         ? _orange
                                         : const Color(0xff666666)),
                                 const SizedBox(height: 10),
-                                Text(label,
+                                LocalizedText(label,
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
                                     style: const TextStyle(fontSize: 11)),
                               ]))),
               ]);
@@ -751,16 +778,17 @@ class _HomePageState extends State<HomePage> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 12)),
-                  Text(widget.library.watchSummary(entry),
+                  LocalizedText(widget.library.watchSummary(entry),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 10, color: _muted)),
                 ])),
             TextButton(
                 onPressed: () => _detail(entry),
-                child: const Text('继续观看', style: TextStyle(fontSize: 12))),
+                child: const LocalizedText('继续观看',
+                    style: TextStyle(fontSize: 12))),
             IconButton(
-                tooltip: '关闭继续观看',
+                tooltip: uiText(context, '关闭继续观看'),
                 icon: const Icon(Icons.close, size: 16),
                 onPressed: () => setState(() => hideContinue = true)),
           ])),
@@ -786,7 +814,7 @@ class _SectionHeader extends StatelessWidget {
             onTap: onTap,
             child: Row(children: [
               Expanded(
-                  child: Text(title,
+                  child: LocalizedText(title,
                       style: const TextStyle(
                           fontSize: 14, fontWeight: FontWeight.w600))),
               if (onTap != null)
@@ -806,10 +834,11 @@ class _Feedback extends StatelessWidget {
       child: Column(children: [
         const Icon(Icons.movie_filter_outlined, size: 32, color: _muted),
         const SizedBox(height: 10),
-        Text(message,
+        LocalizedText(message,
             textAlign: TextAlign.center,
             style: const TextStyle(color: _muted, fontSize: 13)),
-        if (action != null) TextButton(onPressed: onTap, child: Text(action!)),
+        if (action != null)
+          TextButton(onPressed: onTap, child: LocalizedText(action!)),
       ]));
 }
 
@@ -830,11 +859,13 @@ class _Poster extends StatelessWidget {
       {required this.entry,
       this.fit = BoxFit.cover,
       this.landscape = false,
-      this.fallback});
+      this.fallback,
+      this.artwork});
   final MediaEntry entry;
   final BoxFit fit;
   final bool landscape;
   final Widget? fallback;
+  final ArtworkResolver? artwork;
   @override
   Widget build(BuildContext context) {
     final placeholder = fallback ??
@@ -845,28 +876,46 @@ class _Poster extends StatelessWidget {
                     size: 28, color: Colors.grey.shade400)));
     final urls =
         landscape ? catalogImageUrls([entry.backdrop]) : entry.posterCandidates;
-    Widget imageAt(int index) {
-      if (index >= urls.length) return placeholder;
-      return Image.network(urls[index],
-          key: ValueKey(urls[index]),
+    Widget imageAt(int index, List<String> candidates,
+        {bool maySearch = true}) {
+      if (index >= candidates.length) {
+        if (!landscape && maySearch && artwork != null) {
+          return FutureBuilder<List<String>>(
+              future: artwork!.find(entry),
+              builder: (context, snapshot) {
+                final extra = snapshot.data
+                        ?.where((url) => !urls.contains(url))
+                        .toList() ??
+                    [];
+                return extra.isEmpty
+                    ? placeholder
+                    : imageAt(0, extra, maySearch: false);
+              });
+        }
+        return placeholder;
+      }
+      return Image.network(candidates[index],
+          key: ValueKey(candidates[index]),
           fit: fit,
           width: double.infinity,
           height: double.infinity,
           excludeFromSemantics: true,
           cacheWidth: landscape ? 1200 : 600,
-          errorBuilder: (_, error, stack) => imageAt(index + 1),
+          errorBuilder: (_, error, stack) =>
+              imageAt(index + 1, candidates, maySearch: maySearch),
           loadingBuilder: (_, child, loading) =>
               loading == null ? child : placeholder);
     }
 
-    return imageAt(0);
+    return imageAt(0, urls);
   }
 }
 
 class _PosterTile extends StatelessWidget {
-  const _PosterTile({required this.entry, required this.onTap});
+  const _PosterTile({required this.entry, required this.onTap, this.artwork});
   final MediaEntry entry;
   final VoidCallback onTap;
+  final ArtworkResolver? artwork;
   @override
   Widget build(BuildContext context) => InkWell(
       onTap: onTap,
@@ -876,7 +925,7 @@ class _PosterTile extends StatelessWidget {
             child: AspectRatio(
                 aspectRatio: .68,
                 child: Stack(fit: StackFit.expand, children: [
-                  _Poster(entry: entry),
+                  _Poster(entry: entry, artwork: artwork),
                   if (entry.remarks.isNotEmpty)
                     Align(
                         alignment: Alignment.bottomCenter,
@@ -907,13 +956,15 @@ class _PosterTile extends StatelessWidget {
 }
 
 class _PosterStrip extends StatelessWidget {
-  const _PosterStrip({required this.entries, required this.onTap});
+  const _PosterStrip(
+      {required this.entries, required this.onTap, this.artwork});
   final List<MediaEntry> entries;
   final ValueChanged<MediaEntry> onTap;
+  final ArtworkResolver? artwork;
   @override
   Widget build(BuildContext context) =>
       LayoutBuilder(builder: (context, constraints) {
-        final width = ((constraints.maxWidth - 40) / 5).clamp(64.0, 110.0);
+        final width = (constraints.maxWidth - 40) / 5;
         return SizedBox(
             height: width / .68 +
                 MediaQuery.textScalerOf(context).scale(12) * 1.5 +
@@ -927,15 +978,18 @@ class _PosterStrip extends StatelessWidget {
                   width: width,
                   child: _PosterTile(
                       entry: entries[index],
+                      artwork: artwork,
                       onTap: () => onTap(entries[index]))),
             ));
       });
 }
 
 class _Spotlight extends StatefulWidget {
-  const _Spotlight({super.key, required this.entries, required this.onTap});
+  const _Spotlight(
+      {super.key, required this.entries, required this.onTap, this.artwork});
   final List<MediaEntry> entries;
   final ValueChanged<MediaEntry> onTap;
+  final ArtworkResolver? artwork;
   @override
   State<_Spotlight> createState() => _SpotlightState();
 }
@@ -956,7 +1010,8 @@ class _SpotlightState extends State<_Spotlight> {
                     return InkWell(
                         onTap: () => widget.onTap(entry),
                         child: Stack(fit: StackFit.expand, children: [
-                          _SpotlightArtwork(entry: entry),
+                          _SpotlightArtwork(
+                              entry: entry, artwork: widget.artwork),
                           const DecoratedBox(
                               decoration: BoxDecoration(
                                   gradient: LinearGradient(
@@ -997,8 +1052,9 @@ class _SpotlightState extends State<_Spotlight> {
 }
 
 class _SpotlightArtwork extends StatelessWidget {
-  const _SpotlightArtwork({required this.entry});
+  const _SpotlightArtwork({required this.entry, this.artwork});
   final MediaEntry entry;
+  final ArtworkResolver? artwork;
 
   @override
   Widget build(BuildContext context) => ColoredBox(
@@ -1010,7 +1066,8 @@ class _SpotlightArtwork extends StatelessWidget {
           fallback: Row(children: [
             AspectRatio(
                 aspectRatio: .68,
-                child: _Poster(entry: entry, fit: BoxFit.contain)),
+                child: _Poster(
+                    entry: entry, fit: BoxFit.contain, artwork: artwork)),
             Expanded(
                 child: Padding(
                     padding: const EdgeInsets.fromLTRB(14, 8, 14, 36),
@@ -1032,11 +1089,13 @@ class _CatalogCard extends StatelessWidget {
       {required this.entry,
       required this.onTap,
       this.trailing,
-      this.watchInfo});
+      this.watchInfo,
+      this.artwork});
   final MediaEntry entry;
   final VoidCallback onTap;
   final Widget? trailing;
   final String? watchInfo;
+  final ArtworkResolver? artwork;
   @override
   Widget build(BuildContext context) => Material(
         color: Colors.white,
@@ -1053,7 +1112,7 @@ class _CatalogCard extends StatelessWidget {
                     height: 99,
                     child: ClipRRect(
                         borderRadius: BorderRadius.circular(5),
-                        child: _Poster(entry: entry))),
+                        child: _Poster(entry: entry, artwork: artwork))),
                 const SizedBox(width: 10),
                 Expanded(
                     child: Column(
@@ -1074,10 +1133,12 @@ class _CatalogCard extends StatelessWidget {
                           style: const TextStyle(fontSize: 10, color: _muted)),
                       const SizedBox(height: 6),
                       Text(
-                          watchInfo ??
+                          (watchInfo == null
+                                  ? null
+                                  : uiText(context, watchInfo!)) ??
                               (entry.description.isEmpty
                                   ? (entry.remarks.isEmpty
-                                      ? '暂无简介'
+                                      ? uiText(context, '暂无简介')
                                       : entry.remarks)
                                   : entry.description),
                           maxLines: watchInfo == null ? 2 : 3,
@@ -1086,7 +1147,9 @@ class _CatalogCard extends StatelessWidget {
                               fontSize: 11, height: 1.4, color: _muted)),
                       const SizedBox(height: 6),
                       SizedBox(
-                          height: 19,
+                          height:
+                              MediaQuery.textScalerOf(context).scale(10) * 1.5 +
+                                  4,
                           child: ListView(
                               scrollDirection: Axis.horizontal,
                               children: [
@@ -1139,7 +1202,7 @@ class _SavedEntries extends StatelessWidget {
                   watchInfo: favorites ? null : library.watchSummary(entry),
                   trailing: favorites
                       ? IconButton(
-                          tooltip: '取消收藏',
+                          tooltip: uiText(context, '取消收藏'),
                           icon:
                               const Icon(Icons.star, color: _orange, size: 20),
                           onPressed: () => library.toggleFavorite(entry))

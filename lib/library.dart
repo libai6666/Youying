@@ -221,6 +221,23 @@ class Library extends ChangeNotifier {
       await _preferences.setBool('public_sources_initialized_v2', true);
       sources = merged;
     }
+    if (validSources &&
+        await _preferences.getBool('public_sources_initialized_v3') != true) {
+      final merged = List<SourceEndpoint>.of(sources);
+      for (final preset in sources.isEmpty
+          ? <SourcePreset>[]
+          : sourcePresets.where((p) => p.introducedIn == 3)) {
+        if (!merged.any((source) =>
+            source.name == preset.source.name ||
+            source.url == preset.source.url)) {
+          merged.add(preset.source);
+        }
+      }
+      await _preferences.setString('sources',
+          jsonEncode(merged.map((source) => source.toJson()).toList()));
+      await _preferences.setBool('public_sources_initialized_v3', true);
+      sources = merged;
+    }
     for (final (text, output) in [
       (favoriteText, favorites),
       (historyText, history)

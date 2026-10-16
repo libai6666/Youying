@@ -15,31 +15,46 @@ final class _NoStorage extends SharedPreferencesAsyncPlatform {
 class _Catalog extends CatalogClient {
   final requested = <String>[];
   bool failB = false;
+  bool failA = false;
+  bool failCategories = false;
+  bool noCategories = false;
+  int pageCount = 2;
+  String revision = '';
+  List<MediaEntry> Function(SourceEndpoint)? records;
   bool empty = false;
+  Completer<void>? categoriesGate;
   Completer<CatalogListing>? blocked;
   @override
-  Future<List<CatalogCategory>> categories(SourceEndpoint source) async => [
-        CatalogCategory(source.name == 'A' ? '1' : '90', '电影'),
-        CatalogCategory(source.name == 'A' ? '6' : '91', '动作片',
-            parentId: source.name == 'A' ? '1' : '90'),
-        CatalogCategory(source.name == 'A' ? '7' : '92', '喜剧片',
-            parentId: source.name == 'A' ? '1' : '90'),
-      ];
+  Future<List<CatalogCategory>> categories(SourceEndpoint source) async {
+    if (categoriesGate != null) await categoriesGate!.future;
+    if (failCategories) throw const FormatException('categories failed');
+    if (noCategories) return [];
+    return [
+      CatalogCategory(source.name == 'A' ? '1' : '90', '电影'),
+      CatalogCategory(source.name == 'A' ? '6' : '91', '动作片',
+          parentId: source.name == 'A' ? '1' : '90'),
+      CatalogCategory(source.name == 'A' ? '7' : '92', '喜剧片',
+          parentId: source.name == 'A' ? '1' : '90'),
+    ];
+  }
+
   @override
   Future<CatalogListing> browse(SourceEndpoint source,
       {String? categoryId, int page = 1}) async {
     requested.add('${source.name}:$categoryId:$page');
     if (source.name == 'A' && blocked != null) return blocked!.future;
+    if (source.name == 'A' && failA) throw const FormatException('failed');
     if (source.name == 'B' && failB) throw const FormatException('failed');
     if (empty) return const CatalogListing([]);
+    if (records != null) return CatalogListing(records!(source));
     return CatalogListing([
       MediaEntry(
-          id: '${source.name}:$categoryId:$page',
-          title: '共同电影',
+          id: '${source.name}:$categoryId:$page$revision',
+          title: '共同电影$revision',
           source: source.name,
           year: '2026',
           category: '动作片'),
-    ], page: page, pageCount: 2);
+    ], page: page, pageCount: pageCount);
   }
 }
 
@@ -60,6 +75,128 @@ void main() {
     client.dispose();
   });
 
+  test('refresh retains cards through category and content requests', () async {
+    await directory.refresh();
+    final feed = directory.feedFor('电影')!;
+    final previous = feed.entries.single.id;
+    client.categoriesGate = Completer<void>();
+    client.blocked = Completer<CatalogListing>();
+    final pending = directory.refresh();
+    expect(directory.feedFor('电影'), same(feed));
+    expect(feed.entries.single.id, previous);
+    expect(directory.supports('电影'), isTrue);
+    client.categoriesGate!.complete();
+    await Future<void>.delayed(Duration.zero);
+    expect(feed.loading, isTrue);
+    expect(feed.entries.single.id, previous);
+    client.blocked!.complete(const CatalogListing([
+      MediaEntry(
+          id: 'new', title: '新电影', source: 'A', year: '2026', category: '动作片'),
+    ]));
+    await pending;
+    expect(feed.loading, isFalse);
+    expect(feed.rawEntries.map((e) => e.id), contains('new'));
+    expect(feed.rawEntries.map((e) => e.id), isNot(contains(previous)));
+  });
+
+  test('failed refresh preserves all cards and successful retry replaces them',
+      () async {
+    await directory.refresh();
+    final feed = directory.feedFor('电影')!;
+    final previous = feed.rawEntries.map((e) => e.id).toList();
+    client.failA = client.failB = true;
+    client.revision = '-new';
+    await directory.refresh();
+    expect(feed.rawEntries.map((e) => e.id), previous);
+    expect(feed.error, isNotNull);
+    expect(feed.issues, hasLength(2));
+    client.failA = client.failB = false;
+    await directory.loadLabel('电影', retry: true);
+    expect(feed.rawEntries.map((e) => e.id), ['A:6:1-new', 'B:91:1-new']);
+    expect(feed.issues, isEmpty);
+    expect(feed.error, isNull);
+  });
+
+  test('partial refresh replaces successful source but retains failed source',
+      () async {
+    await directory.refresh();
+    final feed = directory.feedFor('电影')!;
+    client.failB = true;
+    client.revision = '-new';
+    await directory.refresh();
+    expect(feed.rawEntries.map((e) => e.id), ['A:6:1-new', 'B:91:1']);
+    expect(feed.error, isNull);
+    expect(feed.issues, hasLength(1));
+  });
+
+  test('category failure reuses the last directory without hiding cards',
+      () async {
+    await directory.refresh();
+    final feed = directory.feedFor('电影')!;
+    final previous = feed.entries.single.id;
+    client.failCategories = true;
+    await directory.refresh();
+    expect(directory.supports('电影'), isTrue);
+    expect(directory.feedFor('电影'), same(feed));
+    expect(feed.entries.single.id, previous);
+    expect(directory.sourceIssues, hasLength(2));
+    expect(directory.categoryError, isNull);
+  });
+
+  test('authoritative empty refresh clears old cards, not on request start',
+      () async {
+    await directory.refresh();
+    final feed = directory.feedFor('电影')!;
+    client.empty = true;
+    final pending = directory.refresh();
+    expect(feed.entries, isNotEmpty);
+    await pending;
+    expect(feed.entries, isEmpty);
+    expect(feed.error, isNull);
+    expect(feed.hasMore, isTrue); // Other leaf categories are still available.
+  });
+
+  test('loaded pages survive revalidation until the new last page is known',
+      () async {
+    await directory.refresh();
+    while (!client.requested.contains('A:6:2')) {
+      await directory.loadLabel('电影', more: true);
+    }
+    final feed = directory.feedFor('电影')!;
+    await directory.refresh();
+    expect(feed.rawEntries.map((e) => e.id), contains('A:6:2'));
+    client.pageCount = 1;
+    await directory.refresh();
+    expect(feed.rawEntries.map((e) => e.id), isNot(contains('A:6:2')));
+  });
+
+  test('removed categories discard their cached pages', () async {
+    await directory.refresh();
+    client.noCategories = true;
+    await directory.refresh();
+    expect(directory.supports('电影'), isFalse);
+    expect(directory.feedFor('电影')!.rawEntries, isEmpty);
+  });
+
+  test('an older same-source refresh cannot replace the newer snapshot',
+      () async {
+    await directory.refresh();
+    final feed = directory.feedFor('电影')!;
+    final blocked = client.blocked = Completer<CatalogListing>();
+    final old = directory.refresh();
+    await Future<void>.delayed(Duration.zero);
+    client.blocked = null;
+    client.revision = '-latest';
+    await directory.refresh();
+    blocked.complete(const CatalogListing([
+      MediaEntry(id: 'stale', title: '过期响应', source: 'A'),
+    ]));
+    await old;
+    expect(directory.feedFor('电影'), same(feed));
+    expect(feed.rawEntries.map((e) => e.id), ['A:6:1-latest', 'B:91:1-latest']);
+    expect(feed.loading, isFalse);
+  });
+
   test('directory uses leaf IDs from each source and groups matching work',
       () async {
     await directory.refresh();
@@ -71,6 +208,26 @@ void main() {
     expect(feed.hasMore, isTrue);
     await directory.loadLabel('电影', more: true);
     expect(client.requested, containsAll(['A:7:1', 'B:92:1']));
+  });
+
+  test('a grouped edition retains every original source version in details',
+      () async {
+    client.records = (source) => [
+          for (final edition in source.name == 'A' ? ['国语', '粤语'] : [''])
+            MediaEntry(
+                id: '${source.name}:$edition',
+                title: '祥赌必赢$edition',
+                source: source.name,
+                year: source.name == 'A' ? '2026' : '2025',
+                category: '喜剧片',
+                director: '罗耀辉',
+                actors: '蔡卓妍,张继聪,邱士缙'),
+        ];
+    await directory.refresh();
+    final feed = directory.feedFor('电影')!;
+    expect(feed.entries, hasLength(1));
+    expect(directory.variantsFor(feed.entries.single).map((e) => e.id),
+        ['A:国语', 'A:粤语', 'B:']);
   });
 
   test(

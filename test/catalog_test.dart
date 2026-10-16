@@ -7,6 +7,79 @@ import 'package:youying/catalog.dart';
 import 'package:youying/library.dart';
 
 void main() {
+  MediaEntry movie(String id,
+          {String title = '祥赌必赢',
+          String year = '2025',
+          String category = '喜剧片',
+          String actors = '蔡卓妍,张继聪,邱士缙',
+          String director = '罗耀辉'}) =>
+      MediaEntry(
+          id: id,
+          remoteId: id,
+          title: title,
+          source: id,
+          year: year,
+          category: category,
+          actors: actors,
+          director: director,
+          poster: 'https://example.com/same.jpg');
+
+  test(
+      'corroborated language editions and conflicting source years share a card',
+      () {
+    final entries = [
+      movie('360:国语', title: '祥赌必赢国语', year: '2026'),
+      movie('360:粤语', title: '祥赌必赢粤语', year: '2026'),
+      movie('极速:85011'),
+      movie('豪华:108569'),
+    ];
+    final grouped = groupCatalog(entries);
+    expect(grouped, hasLength(1));
+    expect(grouped.single.entries.map((e) => e.id), entries.map((e) => e.id));
+    expect(grouped.single.entries[0].title, '祥赌必赢国语');
+    expect(grouped.single.entries[1].year, '2026');
+    expect(catalogWorkTitle('祥赌必赢（粤语版）'), '祥赌必赢');
+    expect(catalogWorkTitle('A Movie 国语'), 'A Movie');
+  });
+
+  test('duplicate matching never relies on a shared poster or title alone', () {
+    final original = movie('original');
+    for (final other in [
+      movie('different-director', director: '另一导演'),
+      movie('different-cast', actors: '另一演员甲,另一演员乙'),
+      movie('remake', year: '1999', director: '另一导演'),
+      movie('unknown-year', year: '', director: ''),
+      movie('no-evidence', year: '2026', actors: '', director: ''),
+      movie('one-actor', year: '2026', actors: '蔡卓妍'),
+      movie('different-season', title: '祥赌必赢第二季'),
+      movie('different-type', category: '电视剧'),
+      movie('commentary', title: '祥赌必赢[电影解说]', category: '电影解说'),
+      movie('uncorroborated-edition', title: '祥赌必赢国语', actors: ''),
+    ]) {
+      expect(groupCatalog([original, other]), hasLength(2), reason: other.id);
+    }
+  });
+
+  test('year suffix normalization preserves original metadata and stable IDs',
+      () {
+    final a = movie('A', year: '2025年');
+    final b = movie('B');
+    expect(groupCatalog([a, b]), hasLength(1));
+    expect(a.year, '2025年');
+    expect(a.remoteId, 'A');
+    expect(catalogIdentity(a), isNot(catalogIdentity(b)));
+  });
+
+  test('an ambiguous entry cannot bridge conflicting remake metadata', () {
+    final weak = movie('weak', actors: '', director: '');
+    final first = movie('first', director: '导演甲');
+    final remake = movie('remake', director: '导演乙');
+    final groups = groupCatalog([weak, first, remake]);
+    expect(groups, hasLength(2));
+    expect(groups.first.entries.map((e) => e.id), ['weak', 'first']);
+    expect(groups.last.entries.single.id, 'remake');
+  });
+
   test('artwork metadata is optional and survives old and new records', () {
     final old =
         MediaEntry.fromJson({'id': 'old', 'title': '旧记录', 'source': 'A'});

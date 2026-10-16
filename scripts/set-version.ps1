@@ -10,6 +10,9 @@
 
 # 或者同时指定两者，构建号必须大于当前值
 .\dev.cmd -Action version -Version 0.2.1 -BuildNumber 10
+
+# debug调试mumu模拟器
+.\dev.cmd -Action debug -Device 192.168.0.103:5555
 #>
 [CmdletBinding()]
 param(

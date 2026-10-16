@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'browse.dart';
 import 'catalog.dart';
 import 'directory.dart';
+import 'download_widgets.dart';
 import 'library.dart';
 import 'player.dart';
 import 'source_presets.dart';
@@ -51,20 +53,24 @@ class PhoneViewport extends StatelessWidget {
   final Widget child;
 
   @override
-  Widget build(BuildContext context) =>
-      LayoutBuilder(builder: (context, constraints) {
-        final width = constraints.maxWidth.clamp(0.0, 480.0);
-        return ColoredBox(
-          color: const Color(0xff242424),
-          child: Center(
-              child: SizedBox(
-                  width: width,
-                  child: MediaQuery(
-                      data: MediaQuery.of(context)
-                          .copyWith(size: Size(width, constraints.maxHeight)),
-                      child: child))),
-        );
-      });
+  Widget build(BuildContext context) => ValueListenableBuilder<bool>(
+      valueListenable: playerFullscreenViewport,
+      builder: (context, fullscreen, _) =>
+          LayoutBuilder(builder: (context, constraints) {
+            final width = fullscreen
+                ? constraints.maxWidth
+                : constraints.maxWidth.clamp(0.0, 480.0);
+            return ColoredBox(
+              color: const Color(0xff242424),
+              child: Center(
+                  child: SizedBox(
+                      width: width,
+                      child: MediaQuery(
+                          data: MediaQuery.of(context).copyWith(
+                              size: Size(width, constraints.maxHeight)),
+                          child: child))),
+            );
+          }));
 }
 
 class SearchPage extends StatefulWidget {
@@ -135,6 +141,8 @@ class _SearchPageState extends State<SearchPage> {
       status = '正在搜索已启用的源…';
     });
     final searchQuery = query.text.trim();
+    unawaited(
+        _saveSearchHistory(() => widget.library.recordSearch(searchQuery)));
     final foundBySource = <String, List<MediaEntry>>{};
     var failed = 0;
     final sources = List.of(widget.library.enabledSources);
@@ -214,6 +222,36 @@ class _SearchPageState extends State<SearchPage> {
     }
   }
 
+  Future<void> _saveSearchHistory(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('搜索历史保存失败，请重试；不影响搜索')));
+      }
+    }
+  }
+
+  Future<void> _clearSearchHistory() async {
+    final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+                title: const Text('清空搜索历史？'),
+                content: const Text('仅删除搜索关键词，不影响观看记录和下载。'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('取消')),
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('清空')),
+                ]));
+    if (confirmed == true && mounted) {
+      await _saveSearchHistory(widget.library.clearSearchHistory);
+    }
+  }
+
   @override
   Widget build(BuildContext context) =>
       ListView(padding: const EdgeInsets.all(16), children: [
@@ -232,6 +270,39 @@ class _SearchPageState extends State<SearchPage> {
           ),
         ),
         const SizedBox(height: 12),
+        AnimatedBuilder(
+            animation: widget.library,
+            builder: (context, _) {
+              final history = widget.library.searchHistory;
+              if (history.isEmpty) return const SizedBox.shrink();
+              return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Expanded(
+                          child: Text('搜索历史',
+                              style: Theme.of(context).textTheme.titleSmall)),
+                      TextButton.icon(
+                          onPressed: _clearSearchHistory,
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          label: const Text('清空')),
+                    ]),
+                    Wrap(spacing: 8, runSpacing: 4, children: [
+                      for (final keyword in history)
+                        InputChip(
+                            label: Text(keyword,
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                            onPressed: () {
+                              query.text = keyword;
+                              unawaited(_search());
+                            },
+                            deleteButtonTooltipMessage: '删除搜索记录：$keyword',
+                            onDeleted: () => _saveSearchHistory(
+                                () => widget.library.removeSearch(keyword))),
+                    ]),
+                    const SizedBox(height: 12),
+                  ]);
+            }),
         Align(
             alignment: Alignment.centerRight,
             child: TextButton.icon(
@@ -360,6 +431,8 @@ class DetailPage extends StatefulWidget {
 
 class _DetailPageState extends State<DetailPage> {
   late MediaEntry entry = widget.entry;
+  MediaEntry? _playingEntry;
+  MediaEntry? _sourceBeforeSwitch;
   late final CatalogClient client = widget.client ?? CatalogClient();
   Library get library => widget.library;
   bool loading = false;
@@ -377,6 +450,8 @@ class _DetailPageState extends State<DetailPage> {
   @override
   void initState() {
     super.initState();
+    _playingEntry = entry.playable ? entry : null;
+    if (_playingEntry != null) _preparePlayback(entry);
     for (final candidate in [widget.entry, ...widget.variants]) {
       _choices[candidate.id] = candidate;
     }
@@ -385,9 +460,12 @@ class _DetailPageState extends State<DetailPage> {
 
   void _preparePlayback(MediaEntry next) {
     final episodes = next.lines.values.where((line) => line.isNotEmpty);
-    _initialEpisode = episodes.isEmpty
-        ? null
-        : Episode.onLine(episodes.first, _episode, _previousLine);
+    _initialEpisode =
+        _episode == null && library.lastWatchedEpisode(next) != null
+            ? library.lastWatchedEpisode(next)
+            : episodes.isEmpty
+                ? null
+                : Episode.onLine(episodes.first, _episode, _previousLine);
     final sameEpisode = _episode != null &&
         _initialEpisode != null &&
         (_initialEpisode!.name.trim() == _episode!.name.trim() ||
@@ -401,6 +479,8 @@ class _DetailPageState extends State<DetailPage> {
     if (next.id == entry.id) return;
     _generation++;
     setState(() {
+      _playingEntry ??= entry.playable ? entry : null;
+      _sourceBeforeSwitch = entry;
       _preparePlayback(next);
       entry = next;
       loading = false;
@@ -443,6 +523,64 @@ class _DetailPageState extends State<DetailPage> {
     });
   }
 
+  Future<void> _pickSource() async {
+    if (loading) return;
+    final next = await showModalBottomSheet<MediaEntry>(
+        context: context,
+        builder: (sheet) => SafeArea(
+                child: ListView(shrinkWrap: true, children: [
+              for (final choice in _choices.values)
+                ListTile(
+                    title: Text(choice.source),
+                    subtitle: Text(choice.title),
+                    trailing: choice.id == entry.id
+                        ? const Icon(Icons.check, color: _orange)
+                        : null,
+                    onTap: () => Navigator.pop(sheet, choice)),
+              ListTile(
+                  title: const Text('查找更多播放源'),
+                  leading: const Icon(Icons.search),
+                  onTap: () {
+                    Navigator.pop(sheet);
+                    _findSources();
+                  }),
+            ])));
+    if (mounted && next != null) _switchSource(next);
+  }
+
+  Future<void> _showDescription() => showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheet) => FractionallySizedBox(
+          heightFactor: 0.7,
+          child: SafeArea(
+              child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(entry.title,
+                            style: Theme.of(sheet).textTheme.titleLarge),
+                        const SizedBox(height: 12),
+                        Text([
+                          entry.year,
+                          entry.area,
+                          entry.category,
+                          entry.remarks
+                        ].where((value) => value.isNotEmpty).join(' · ')),
+                        for (final (label, value) in [
+                          ('演员', entry.actors),
+                          ('导演', entry.director),
+                          ('语言', entry.language),
+                          ('时长', entry.duration)
+                        ])
+                          if (value.isNotEmpty) Text('$label：$value'),
+                        const SizedBox(height: 16),
+                        Text(entry.description.isEmpty
+                            ? '暂无简介'
+                            : entry.description),
+                      ])))));
+
   Future<void> _load() async {
     final sources =
         library.enabledSources.where((source) => source.name == entry.source);
@@ -459,12 +597,18 @@ class _DetailPageState extends State<DetailPage> {
         setState(() {
           _preparePlayback(full);
           entry = full;
+          if (full.playable) _playingEntry = full;
+          _sourceBeforeSwitch = null;
           _choices[full.id] = full;
         });
       }
     } catch (_) {
       if (mounted && generation == _generation) {
-        setState(() => error = '详情请求失败；已保留现有线路，可重试');
+        setState(() {
+          if (_sourceBeforeSwitch != null) entry = _sourceBeforeSwitch!;
+          _sourceBeforeSwitch = null;
+          error = '详情请求失败；已保留现有线路，可重试';
+        });
       }
     } finally {
       if (mounted && generation == _generation) setState(() => loading = false);
@@ -478,45 +622,96 @@ class _DetailPageState extends State<DetailPage> {
     super.dispose();
   }
 
+  Widget _pendingPlayback() => ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: ColoredBox(
+              color: Colors.black,
+              child: Center(
+                  child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        if (loading) ...[
+                          const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white)),
+                          const SizedBox(height: 12),
+                        ],
+                        Text(
+                            loading
+                                ? '正在加载播放资源…'
+                                : error != null
+                                    ? '播放资源加载失败，请重试或换源'
+                                    : '当前来源暂无可播放视频，请换源',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 12)),
+                        if (!loading)
+                          Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 12,
+                              children: [
+                                if (entry.remoteId != null &&
+                                    library.enabledSources.any((source) =>
+                                        source.name == entry.source))
+                                  TextButton(
+                                      onPressed: _load,
+                                      child: const Text('重试详情')),
+                                TextButton(
+                                    onPressed: _pickSource,
+                                    child: const Text('换源')),
+                              ]),
+                      ]))))));
+
   @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(
-            title:
-                Text(entry.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-            actions: [
-              AnimatedBuilder(
-                  animation: library,
-                  builder: (context, _) => IconButton(
-                        tooltip: library.isFavorite(entry) ? '取消收藏' : '收藏',
-                        icon: Icon(
-                            library.isFavorite(entry)
-                                ? Icons.star
-                                : Icons.star_outline,
-                            color: _orange),
-                        onPressed: () => library.toggleFavorite(entry),
-                      )),
-            ]),
-        body: ListView(padding: const EdgeInsets.all(16), children: [
-          if (loading) const LinearProgressIndicator(),
-          if (error != null) ...[
-            Text(error!),
-            TextButton(onPressed: _load, child: const Text('重试详情')),
-          ],
-          if (!loading && entry.playable)
-            PlayerPage(
-                key: ObjectKey(entry),
-                entry: entry,
-                library: library,
-                embedded: true,
-                initial: _initialEpisode,
-                initialPositionMs: _initialPosition,
-                onPlaybackChanged: (episode, position) {
-                  _episode = episode;
-                  _position = position;
-                  _previousLine = entry.lines.values.firstWhere(
-                      (line) => line.any((e) => e.url == episode.url),
-                      orElse: () => []);
-                }),
+  Widget build(BuildContext context) {
+    final playingEntry = _playingEntry ?? (entry.playable ? entry : null);
+    return Scaffold(
+      appBar: AppBar(
+          title:
+              Text(entry.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          actions: [
+            AnimatedBuilder(
+                animation: library,
+                builder: (context, _) => IconButton(
+                      tooltip: library.isFavorite(entry) ? '取消收藏' : '收藏',
+                      icon: Icon(
+                          library.isFavorite(entry)
+                              ? Icons.star
+                              : Icons.star_outline,
+                          color: _orange),
+                      onPressed: () => library.toggleFavorite(entry),
+                    )),
+          ]),
+      body: ListView(padding: const EdgeInsets.all(16), children: [
+        KeyedSubtree(
+            key: const ValueKey('detail-video'),
+            child: playingEntry == null
+                ? _pendingPlayback()
+                : PlayerPage(
+                    key: const ValueKey('detail-player'),
+                    entry: playingEntry,
+                    library: library,
+                    embedded: true,
+                    onChooseSource: loading ? null : _pickSource,
+                    onShowDetails: _showDescription,
+                    initial: _initialEpisode,
+                    initialPositionMs: _initialPosition,
+                    onPlaybackChanged: (episode, position) {
+                      _episode = episode;
+                      _position = position;
+                      _previousLine = playingEntry.lines.values.firstWhere(
+                          (line) => line.any((e) => e.url == episode.url),
+                          orElse: () => []);
+                    })),
+        if (error != null && playingEntry != null) ...[
+          Text(error!),
+          TextButton(onPressed: _load, child: const Text('重试详情')),
+        ],
+        if (playingEntry != null || !loading) ...[
           const _SectionHeader(title: '播放来源', inset: 0),
           Wrap(spacing: 6, runSpacing: 6, children: [
             for (final candidate in _choices.values)
@@ -566,9 +761,10 @@ class _DetailPageState extends State<DetailPage> {
           const _SectionHeader(title: '剧情简介', inset: 0),
           Text(entry.description.isEmpty ? '暂无简介' : entry.description),
           const SizedBox(height: 12),
-          if (!entry.playable) const Text('没有确认可播放的直链；可能需要未恢复的解析接口。'),
-        ]),
-      );
+        ],
+      ]),
+    );
+  }
 }
 
 class LibraryPage extends StatelessWidget {
@@ -578,49 +774,7 @@ class LibraryPage extends StatelessWidget {
   final bool showHistory;
 
   @override
-  Widget build(BuildContext context) =>
-      ListView(padding: const EdgeInsets.all(16), children: [
-        const Text('下载支持前台 MP4/WebM 和无加密的 HLS 点播；不支持直播、DRM 或原 APK 后台任务。'),
-        const SizedBox(height: 12),
-        if (showHistory)
-          EntryList(
-            entries: library.recentEntries,
-            library: library,
-            title: '观看历史',
-            empty: '尚无观看历史。',
-          ),
-        const Divider(),
-        Text('已下载文件：${library.downloads.length}',
-            style: Theme.of(context).textTheme.titleMedium),
-        for (final entry in library.downloads.entries)
-          ListTile(
-            leading: const Icon(Icons.offline_pin),
-            title: Text(_downloadTitle(entry.key)),
-            subtitle: const Text('在相应的播放器页面点击“播放已下载文件”'),
-          ),
-      ]);
-
-  String _downloadTitle(String key) {
-    try {
-      final parts = jsonDecode(key);
-      if (parts is List && parts.length == 2 && parts[0] is String) {
-        final entry = library.history[parts[0]];
-        if (entry != null) {
-          for (final episodes in entry.lines.values) {
-            for (final episode in episodes) {
-              if (episode.url == parts[1]) {
-                return '${entry.title} · ${episode.name}';
-              }
-            }
-          }
-          return entry.title;
-        }
-      }
-    } on FormatException {
-      return '已保存文件';
-    }
-    return '已保存文件';
-  }
+  Widget build(BuildContext context) => DownloadsView(library: library);
 }
 
 class SettingsPage extends StatefulWidget {
@@ -634,7 +788,8 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   bool saving = false;
 
-  Future<void> _change(Future<void> Function() action) async {
+  Future<void> _change(Future<void> Function() action,
+      {String errorMessage = '源配置保存失败，请检查输入并重试'}) async {
     if (saving) return;
     setState(() => saving = true);
     try {
@@ -642,7 +797,7 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('源配置保存失败，请检查输入并重试')),
+          SnackBar(content: Text(errorMessage)),
         );
       }
     } finally {
@@ -671,6 +826,44 @@ class _SettingsPageState extends State<SettingsPage> {
       animation: widget.library,
       builder: (context, _) =>
           ListView(padding: const EdgeInsets.all(16), children: [
+            Text('播放设置', style: Theme.of(context).textTheme.titleLarge),
+            SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('自动续播下一集'),
+                subtitle: const Text('播放结束后等待 3 秒，继续播放当前线路的下一集'),
+                value: widget.library.autoPlayNext,
+                onChanged: saving
+                    ? null
+                    : (value) => _change(
+                        () => widget.library.setAutoPlayNext(value),
+                        errorMessage: '自动续播设置保存失败，请重试')),
+            const SizedBox(height: 16),
+            Text('下载设置', style: Theme.of(context).textTheme.titleLarge),
+            ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('下载并发数'),
+                subtitle: const Text('默认 3 个，最多 10 个；按剧集任务计数'),
+                trailing: DropdownButton<int>(
+                  key: ValueKey(widget.library.offline.parallelism),
+                  value: widget.library.offline.parallelism,
+                  items: [
+                    for (var count = 1; count <= 10; count++)
+                      DropdownMenuItem(value: count, child: Text('$count 个'))
+                  ],
+                  onChanged: saving
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            _change(
+                                () => widget.library.offline
+                                    .setParallelism(value),
+                                errorMessage: '下载并发数保存失败，请重试');
+                          }
+                        },
+                )),
+            const Text(
+                '支持来源允许保存的普通文件与 AES-128 HLS 点播。DRM 需平台授权离线许可；直播暂不支持。任务与缓存保存在应用私有目录，暂停与重启后可继续。'),
+            const SizedBox(height: 16),
             Text('源配置', style: Theme.of(context).textTheme.titleLarge),
             Text(
                 '共 ${widget.library.sources.length} 个源，已启用 ${widget.library.enabledSources.length} 个。'),
@@ -717,7 +910,7 @@ class _SettingsPageState extends State<SettingsPage> {
             Text('恢复范围', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
             const Text(
-                '来自原 APK 的确认项：Flutter/Dart AOT 字符串与安卓 Media3 播放器接口。播放器 Android 实现、界面、收藏、历史、前台下载和 JSON 列表兼容器均为新写代码。'),
+                '来自原 APK 的确认项：Flutter/Dart AOT 字符串与安卓 Media3 播放器接口。播放器 Android 实现、界面、收藏、历史、Media3 离线下载和 JSON 列表兼容器均为新写代码。'),
             const SizedBox(height: 8),
             const Text('不包含：未知服务端、完整原始 Dart、原本的解析/下载加密逻辑、广告与统计 SDK。'),
           ]));

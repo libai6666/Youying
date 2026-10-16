@@ -15,6 +15,7 @@ final class _NoStorage extends SharedPreferencesAsyncPlatform {
 class _Catalog extends CatalogClient {
   final requested = <String>[];
   bool failB = false;
+  bool empty = false;
   Completer<CatalogListing>? blocked;
   @override
   Future<List<CatalogCategory>> categories(SourceEndpoint source) async => [
@@ -30,6 +31,7 @@ class _Catalog extends CatalogClient {
     requested.add('${source.name}:$categoryId:$page');
     if (source.name == 'A' && blocked != null) return blocked!.future;
     if (source.name == 'B' && failB) throw const FormatException('failed');
+    if (empty) return const CatalogListing([]);
     return CatalogListing([
       MediaEntry(
           id: '${source.name}:$categoryId:$page',
@@ -122,6 +124,32 @@ void main() {
     expect(directory.feeds, isEmpty);
   });
 
+  test('exhausting pagination does not remove supported categories or results',
+      () async {
+    await directory.refresh();
+    final feed = directory.feedFor('电影')!;
+    while (feed.hasMore) {
+      await directory.loadLabel('电影', more: true);
+    }
+    expect(directory.supports('电影'), isTrue);
+    expect(feed.entries, isNotEmpty);
+    expect(directory.supports('AI漫剧'), isFalse);
+  });
+
+  test(
+      'a supported but empty category remains distinct from an unsupported category',
+      () async {
+    client.empty = true;
+    await directory.refresh();
+    final feed = directory.feedFor('电影')!;
+    while (feed.hasMore) {
+      await directory.loadLabel('电影', more: true);
+    }
+    expect(directory.supports('电影'), isTrue);
+    expect(feed.entries, isEmpty);
+    expect(directory.supports('电视直播'), isFalse);
+  });
+
   test('category trees handle cycles and missing aggregate parents', () {
     final cyclic = directoryCategories(const [
       CatalogCategory('1', '电影', parentId: '2'),
@@ -133,6 +161,136 @@ void main() {
             .single
             .id,
         '9');
+  });
+
+  test(
+      'combined facets use actual metadata and normalize area and language aliases',
+      () {
+    const entry = MediaEntry(
+        id: 'A:1',
+        title: '影片',
+        source: 'A',
+        category: '动作片',
+        genres: '冒险,科幻',
+        area: '中国大陆/中国香港',
+        language: '汉语普通话,粤语',
+        year: '2026年');
+    const filter =
+        CatalogFilters(genre: '动作', area: '大陆', language: '国语', year: '2026');
+    expect(filter.matches(entry), isTrue);
+    expect(filter.copyWith(genre: '冒险').matches(entry), isTrue);
+    expect(filter.copyWith(area: '美国').matches(entry), isFalse);
+    expect(filter.copyWith(language: '英语').matches(entry), isFalse);
+    expect(filter.copyWith(year: '2025').matches(entry), isFalse);
+    expect(
+        filter.matches(const MediaEntry(id: 'empty', title: '未知', source: 'A')),
+        isFalse);
+  });
+
+  test('genre normalization preserves comedy and musical drama suffixes', () {
+    const series = MediaEntry(
+        id: 'tv-comedy',
+        title: '喜剧电视剧',
+        source: 'A',
+        category: '国产剧',
+        genres: '喜剧,音乐剧',
+        year: '2026');
+    const movie = MediaEntry(
+        id: 'movie-comedy',
+        title: '喜剧电影',
+        source: 'A',
+        category: '喜剧片',
+        year: '2026');
+    expect(catalogGenres(series), containsAll(['喜剧', '音乐剧']));
+    expect(
+        const CatalogFilters(genre: '喜剧').apply(groupCatalog([series, movie])),
+        [series, movie]);
+    expect(const CatalogFilters(genre: '音乐剧').matches(series), isTrue);
+  });
+
+  test(
+      'filtering considers matching variants without changing unfiltered groups',
+      () {
+    final groups = [
+      CatalogGroup([
+        const MediaEntry(id: 'A:1', title: '影片', source: 'A'),
+        const MediaEntry(
+            id: 'B:1', title: '影片', source: 'B', genres: '动作', area: '美国'),
+      ])
+    ];
+    final filtered =
+        const CatalogFilters(genre: '动作', area: '美国').apply(groups);
+    expect(filtered.single.source, 'B');
+    expect(groups.single.entries, hasLength(2));
+    expect(const CatalogFilters().apply(groups).single.source, 'A');
+  });
+
+  test(
+      'sorts use available metrics across variants and preserve stable ties and unknowns',
+      () {
+    final groups = [
+      CatalogGroup([
+        const MediaEntry(
+            id: 'old',
+            title: '旧',
+            source: 'A',
+            popularity: 2,
+            rating: 8,
+            updatedAtMs: 100)
+      ]),
+      CatalogGroup([
+        const MediaEntry(
+            id: 'new',
+            title: '新',
+            source: 'A',
+            popularity: 9,
+            rating: 6,
+            updatedAtMs: 200)
+      ]),
+      CatalogGroup([const MediaEntry(id: 'unknown', title: '未知', source: 'A')]),
+      CatalogGroup([
+        const MediaEntry(id: 'variant', title: '多版本', source: 'A'),
+        const MediaEntry(
+            id: 'variantB',
+            title: '多版本',
+            source: 'B',
+            popularity: 20,
+            rating: 9,
+            updatedAtMs: 300)
+      ]),
+      CatalogGroup([
+        const MediaEntry(
+            id: 'unknown2', title: '未知2', source: 'A', popularity: 0)
+      ]),
+    ];
+    expect(const CatalogFilters().apply(groups).map((e) => e.id),
+        ['variant', 'new', 'old', 'unknown', 'unknown2']);
+    expect(
+        const CatalogFilters(order: CatalogOrder.popular)
+            .apply(groups)
+            .map((e) => e.id),
+        ['variant', 'new', 'old', 'unknown', 'unknown2']);
+    expect(
+        const CatalogFilters(order: CatalogOrder.rating)
+            .apply(groups)
+            .map((e) => e.id),
+        ['variant', 'old', 'new', 'unknown', 'unknown2']);
+    expect(groups.first.primary.id, 'old');
+  });
+
+  test(
+      'filter remains applied when additional pages arrive without hiding homepage entries',
+      () async {
+    await directory.refresh();
+    const filters = CatalogFilters(genre: '喜剧');
+    expect(filters.apply(directory.feedFor('电影')!.groups), isEmpty);
+    final original = directory.feedFor('电影')!.entries.length;
+    await directory.loadLabel('电影', more: true);
+    expect(filters.apply(directory.feedFor('电影')!.groups), isEmpty);
+    expect(directory.feedFor('电影')!.entries.length,
+        greaterThanOrEqualTo(original));
+    expect(directory.variantsFor(directory.feedFor('电影')!.entries.first).length,
+        greaterThanOrEqualTo(2));
   });
 
   test('search grouping retains remakes, seasons and unknown-year records', () {

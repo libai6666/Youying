@@ -133,6 +133,14 @@ class MediaBridge(
             }
             val player = makePlayer(id)
             when (call.method) {
+                "openDownload" -> {
+                    val downloadId = data["downloadId"] as? String ?: throw IllegalArgumentException("downloadId required")
+                    player.setMediaSource(OfflineStore.get(context).offlineSource(downloadId))
+                    player.seekTo((data["startMs"] as? Number)?.toLong()?.coerceAtLeast(0) ?: 0)
+                    notify(id, "hasMedia", true)
+                    player.prepare()
+                    player.playWhenReady = data["play"] != false
+                }
                 "open" -> {
                     val file = data["filePath"] as? String
                     val url = data["url"] as? String

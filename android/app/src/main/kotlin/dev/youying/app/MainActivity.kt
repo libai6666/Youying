@@ -5,11 +5,13 @@ import io.flutter.embedding.engine.FlutterEngine
 
 class MainActivity : FlutterActivity() {
     private var mediaBridge: MediaBridge? = null
+    private var downloadBridge: DownloadBridge? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         mediaBridge = MediaBridge(this, flutterEngine.dartExecutor.binaryMessenger,
             flutterEngine.platformViewsController.registry)
+        downloadBridge = DownloadBridge(this, flutterEngine.dartExecutor.binaryMessenger)
     }
 
     override fun onStop() {
@@ -18,6 +20,8 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        downloadBridge?.dispose()
+        downloadBridge = null
         mediaBridge?.dispose()
         mediaBridge = null
         super.cleanUpFlutterEngine(flutterEngine)

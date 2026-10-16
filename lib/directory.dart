@@ -5,6 +5,128 @@ import 'package:flutter/foundation.dart';
 import 'catalog.dart';
 import 'library.dart';
 
+enum CatalogOrder { latest, popular, rating }
+
+class CatalogFilters {
+  const CatalogFilters(
+      {this.genre = '',
+      this.area = '',
+      this.language = '',
+      this.year = '',
+      this.order = CatalogOrder.latest});
+  final String genre;
+  final String area;
+  final String language;
+  final String year;
+  final CatalogOrder order;
+
+  CatalogFilters copyWith(
+          {String? genre,
+          String? area,
+          String? language,
+          String? year,
+          CatalogOrder? order}) =>
+      CatalogFilters(
+          genre: genre ?? this.genre,
+          area: area ?? this.area,
+          language: language ?? this.language,
+          year: year ?? this.year,
+          order: order ?? this.order);
+
+  bool matches(MediaEntry entry) =>
+      (genre.isEmpty || catalogGenres(entry).contains(genre)) &&
+      (area.isEmpty || catalogTokens(entry.area, area: true).contains(area)) &&
+      (language.isEmpty || catalogTokens(entry.language).contains(language)) &&
+      (year.isEmpty || catalogYear(entry.year) == year);
+
+  List<MediaEntry> apply(List<CatalogGroup> groups) {
+    num? value(MediaEntry entry) => switch (order) {
+          CatalogOrder.latest => entry.updatedAtMs,
+          CatalogOrder.popular =>
+            (entry.popularity ?? 0) > 0 ? entry.popularity : null,
+          CatalogOrder.rating => entry.rating,
+        };
+    final matches = <MediaEntry>[];
+    final values = <String, num?>{};
+    for (final group in groups) {
+      final eligible = group.entries.where(this.matches).toList();
+      if (eligible.isEmpty) continue;
+      final primary = CatalogGroup(eligible).primary;
+      matches.add(primary);
+      final known = eligible.map(value).whereType<num>().toList();
+      values[primary.id] =
+          known.isEmpty ? null : known.reduce((a, b) => a > b ? a : b);
+    }
+    final index = {for (var i = 0; i < matches.length; i++) matches[i].id: i};
+    matches.sort((a, b) {
+      final x = values[a.id], y = values[b.id];
+      final compared = x == null
+          ? (y == null ? 0 : 1)
+          : y == null
+              ? -1
+              : y.compareTo(x);
+      return compared == 0 ? index[a.id]!.compareTo(index[b.id]!) : compared;
+    });
+    return matches;
+  }
+}
+
+String catalogYear(String value) =>
+    RegExp(r'^\d{4}').firstMatch(value.trim())?.group(0) ?? '';
+
+List<String> catalogTokens(String value, {bool area = false}) => value
+    .split(RegExp(r'[,，、/|;；\s]+'))
+    .where((s) => s.isNotEmpty)
+    .map((s) => area
+        ? switch (s) {
+            '中国大陆' || '内地' || '大陆' => '大陆',
+            '中国香港' || '香港' => '香港',
+            '中国台湾' || '台湾' => '台湾',
+            _ => s,
+          }
+        : switch (s) {
+            '汉语普通话' || '普通话' || '国语' => '国语',
+            _ => s,
+          })
+    .toList();
+
+List<String> catalogGenres(MediaEntry entry) =>
+    catalogTokens('${entry.genres},${entry.category}')
+        .map((s) => s.replaceFirst(RegExp(r'片$'), ''))
+        .toList();
+
+List<String> catalogGenreOptions(String label) =>
+    switch (directoryLabel(label)) {
+      '电影' => [
+          '喜剧',
+          '爱情',
+          '恐怖',
+          '动作',
+          '科幻',
+          '剧情',
+          '战争',
+          '悬疑',
+          '犯罪',
+          '动画',
+          '纪录'
+        ],
+      '电视剧' || '短剧' => [
+          '古装',
+          '爱情',
+          '都市',
+          '悬疑',
+          '剧情',
+          '家庭',
+          '喜剧',
+          '战争',
+          '犯罪',
+          '武侠'
+        ],
+      '动漫' || 'AI漫剧' => ['玄幻', '奇幻', '冒险', '动作', '搞笑', '恋爱', '校园', '热血', '动画'],
+      '综艺' => ['真人秀', '音乐', '脱口秀', '喜剧', '舞蹈', '访谈', '生活'],
+      _ => [],
+    };
+
 class DirectoryFeed {
   final List<MediaEntry> rawEntries = [];
   List<CatalogGroup> groups = [];
@@ -160,7 +282,10 @@ class DirectoryController extends ChangeNotifier {
       });
 
   bool supports(String label) =>
-      !loadingCategories && _partitions(directoryLabel(label)).isNotEmpty;
+      !loadingCategories &&
+      _sources.any((source) => directoryCategories(
+              _categories[source.url] ?? [], directoryLabel(label))
+          .isNotEmpty);
   DirectoryFeed? feedFor(String label) => feeds[directoryLabel(label)];
 
   Future<void> ensureLabel(String label) async {

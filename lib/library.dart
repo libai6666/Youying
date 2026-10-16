@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'catalog.dart';
 import 'download.dart';
+import 'offline_downloads.dart';
 import 'source_presets.dart';
 
 /// Rewritten optional adapter: `ac=videolist&wd=` is a commonly used JSON
@@ -29,8 +31,10 @@ class CatalogClient {
       throw const FormatException('缺少该源的资源 ID');
     }
     final results = await _request(source, {'ac': 'detail', 'ids': id});
-    return results.firstWhere((item) => item.remoteId == id,
-        orElse: () => throw const FormatException('详情没有返回对应资源'));
+    return results
+        .firstWhere((item) => item.remoteId == id,
+            orElse: () => throw const FormatException('详情没有返回对应资源'))
+        .withArtworkFrom([entry]);
   }
 
   Future<List<MediaEntry>> _request(
@@ -85,8 +89,42 @@ class CatalogClient {
   void dispose() => _client.close();
 }
 
+class WatchProgress {
+  const WatchProgress(
+      {this.positionMs = 0, this.durationMs = 0, this.completed = false});
+  final int positionMs;
+  final int durationMs;
+  final bool completed;
+  int? get percent => completed
+      ? 100
+      : durationMs > 0
+          ? (positionMs * 100 ~/ durationMs).clamp(0, 99)
+          : positionMs == 0
+              ? 0
+              : null;
+  static String time(int ms) {
+    final seconds = ms ~/ 1000;
+    return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
+  }
+
+  String get label => completed
+      ? '已看完 · 100%'
+      : positionMs == 0
+          ? '未观看 · 0%'
+          : durationMs > 0
+              ? '已观看 $percent% · ${time(positionMs)} / ${time(durationMs)}'
+              : '已观看 ${time(positionMs)} · 比例待更新';
+  Map<String, Object> toJson() =>
+      {'position': positionMs, 'duration': durationMs, 'completed': completed};
+}
+
 class Library extends ChangeNotifier {
-  Library(this._preferences);
+  Library(this._preferences, {OfflineDownloads? offline})
+      : offline = offline ?? OfflineDownloads() {
+    this.offline.addListener(notifyListeners);
+  }
+
+  final OfflineDownloads offline;
 
   final SharedPreferencesAsync _preferences;
   List<SourceEndpoint> sources = [];
@@ -104,11 +142,21 @@ class Library extends ChangeNotifier {
   }
 
   final Map<String, int> positionsMs = {};
+  final Map<String, WatchProgress> _watchProgress = {};
+  final Map<String, String> _lastEpisodes = {};
+  Future<void>? _playbackWrites;
+  bool _disposed = false;
+  static const maxSearchHistory = 20;
+  List<String> _searchHistory = [];
+  List<String> get searchHistory => List.unmodifiable(_searchHistory);
+  Future<void> _searchWrites = Future<void>.value();
+  bool autoPlayNext = true;
   final Map<String, String> downloads = {};
 
   static Future<Library> open() async {
     final library = Library(SharedPreferencesAsync());
     await library.load();
+    unawaited(library.offline.initialize());
     return library;
   }
 
@@ -118,6 +166,25 @@ class Library extends ChangeNotifier {
     final historyText = await _preferences.getString('history');
     final positionText = await _preferences.getString('positions');
     final downloadsText = await _preferences.getString('downloads');
+    final searchText = await _preferences.getString('search_history');
+    final watchText = await _preferences.getString('watch_progress');
+    autoPlayNext = await _preferences.getBool('auto_play_next') ?? true;
+    try {
+      final seen = <String>{};
+      _searchHistory = searchText == null
+          ? []
+          : (jsonDecode(searchText) as List)
+              .whereType<String>()
+              .map((query) => query.trim())
+              .where(
+                  (query) => query.isNotEmpty && seen.add(query.toLowerCase()))
+              .take(maxSearchHistory)
+              .toList();
+    } on FormatException {
+      _searchHistory = [];
+    } on TypeError {
+      _searchHistory = [];
+    }
     var validSources = true;
     // Malformed previous state is ignored without overwriting the saved data.
     try {
@@ -195,6 +262,39 @@ class Library extends ChangeNotifier {
       positionsMs.clear();
       downloads.clear();
     }
+    _watchProgress.clear();
+    _lastEpisodes.clear();
+    try {
+      if (watchText != null) {
+        final data = jsonDecode(watchText) as Map;
+        for (final item in (data['episodes'] as Map).entries) {
+          final value = item.value as Map;
+          final position = value['position'];
+          final duration = value['duration'];
+          if (item.key is String &&
+              position is int &&
+              position >= 0 &&
+              duration is int &&
+              duration >= 0) {
+            _watchProgress[item.key as String] = WatchProgress(
+                positionMs: position,
+                durationMs: duration,
+                completed: value['completed'] == true);
+          }
+        }
+        for (final item in (data['lastEpisodes'] as Map).entries) {
+          if (item.key is String && item.value is String) {
+            _lastEpisodes[item.key as String] = item.value as String;
+          }
+        }
+      }
+    } on FormatException {
+      _watchProgress.clear();
+      _lastEpisodes.clear();
+    } on TypeError {
+      _watchProgress.clear();
+      _lastEpisodes.clear();
+    }
     notifyListeners();
   }
 
@@ -204,6 +304,37 @@ class Library extends ChangeNotifier {
     await _saveSources(
         [...sources.where((s) => s.name != source.name), source]);
   }
+
+  Future<void> setAutoPlayNext(bool value) async {
+    await _preferences.setBool('auto_play_next', value);
+    autoPlayNext = value;
+    notifyListeners();
+  }
+
+  Future<void> _editSearchHistory(List<String> Function(List<String>) edit) {
+    final operation = _searchWrites.then((_) async {
+      final next = edit(_searchHistory);
+      await _preferences.setString('search_history', jsonEncode(next));
+      _searchHistory = next;
+      notifyListeners();
+    });
+    _searchWrites = operation.catchError((Object _) {});
+    return operation;
+  }
+
+  Future<void> recordSearch(String value) {
+    final query = value.trim();
+    if (query.isEmpty) return Future<void>.value();
+    return _editSearchHistory((history) => [
+          query,
+          ...history.where((item) => item.toLowerCase() != query.toLowerCase()),
+        ].take(maxSearchHistory).toList());
+  }
+
+  Future<void> removeSearch(String query) => _editSearchHistory(
+      (history) => history.where((item) => item != query).toList());
+
+  Future<void> clearSearchHistory() => _editSearchHistory((_) => []);
 
   Future<void> _saveSources(List<SourceEndpoint> next) async {
     await _preferences.setString(
@@ -246,22 +377,87 @@ class Library extends ChangeNotifier {
       jsonEncode([id, episode.url]);
 
   int resumePosition(String id, Episode episode) =>
-      positionsMs[episodeKey(id, episode)] ?? 0;
+      _watchProgress[episodeKey(id, episode)]?.positionMs ??
+      positionsMs[episodeKey(id, episode)] ??
+      0;
 
-  String? downloadedFile(String id, Episode episode) =>
-      downloads[episodeKey(id, episode)];
+  WatchProgress watchProgress(String id, Episode episode) =>
+      _watchProgress[episodeKey(id, episode)] ??
+      WatchProgress(positionMs: resumePosition(id, episode));
+
+  Episode? lastWatchedEpisode(MediaEntry entry) {
+    final episodes = entry.lines.values.expand((line) => line).toList();
+    for (final episode in episodes) {
+      if (episode.url == _lastEpisodes[entry.id]) return episode;
+    }
+    for (final episode in episodes) {
+      if (resumePosition(entry.id, episode) > 0) return episode;
+    }
+    return null;
+  }
+
+  String watchSummary(MediaEntry entry) {
+    final episode = lastWatchedEpisode(entry);
+    return [
+      entry.source,
+      if (episode != null) episode.name,
+      if (episode != null) watchProgress(entry.id, episode).label else '暂无分集进度'
+    ].join(' · ');
+  }
+
+  String? downloadedFile(String id, Episode episode) {
+    final task = offline.find(id, episode);
+    return task?.completed == true
+        ? 'media3:${task!.id}'
+        : downloads[episodeKey(id, episode)];
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    offline.removeListener(notifyListeners);
+    offline.dispose();
+    super.dispose();
+  }
 
   Future<void> recordPlay(MediaEntry entry,
-      {Episode? episode, int? position}) async {
+      {Episode? episode, int? position, int? duration, bool? completed}) {
     history.remove(entry.id);
     history[entry.id] = entry;
-    if (episode != null && position != null && position >= 0) {
-      positionsMs[episodeKey(entry.id, episode)] = position;
+    if (episode != null) {
+      final key = episodeKey(entry.id, episode);
+      final previous = watchProgress(entry.id, episode);
+      final total =
+          duration != null && duration > 0 ? duration : previous.durationMs;
+      final finished = completed ?? previous.completed;
+      final current = finished && total > 0
+          ? total
+          : position != null && position >= 0
+              ? position
+              : previous.positionMs;
+      positionsMs[key] = current;
+      _watchProgress[key] = WatchProgress(
+          positionMs: current, durationMs: total, completed: finished);
+      _lastEpisodes[entry.id] = episode.url;
     }
-    await _preferences.setString(
-        'history', MediaEntry.encodeList(history.values));
-    await _preferences.setString('positions', jsonEncode(positionsMs));
-    notifyListeners();
+    final historyText = MediaEntry.encodeList(history.values);
+    final positionText = jsonEncode(positionsMs);
+    final watchText = jsonEncode({
+      'episodes': {
+        for (final item in _watchProgress.entries) item.key: item.value.toJson()
+      },
+      'lastEpisodes': _lastEpisodes
+    });
+    Future<void> persist() async {
+      await _preferences.setString('history', historyText);
+      await _preferences.setString('positions', positionText);
+      await _preferences.setString('watch_progress', watchText);
+      if (!_disposed) notifyListeners();
+    }
+
+    final operation = _playbackWrites?.then((_) => persist()) ?? persist();
+    _playbackWrites = operation.catchError((Object _) {});
+    return operation;
   }
 
   final Set<String> _activeDownloads = {};

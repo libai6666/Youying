@@ -34,6 +34,7 @@ class _HomePageState extends State<HomePage> {
   String category = '首页';
   String ranking = '电视剧';
   bool hideContinue = false;
+  final Map<String, CatalogFilters> _catalogFilters = {};
 
   @override
   void initState() {
@@ -219,6 +220,7 @@ class _HomePageState extends State<HomePage> {
         if (browse.supports(label)) _posterSection(title, label),
       if (browse.sourceIssues.isNotEmpty)
         ExpansionTile(
+            key: const PageStorageKey('home-source-issues'),
             title: const Text('部分内容来源暂时不可用',
                 style: TextStyle(fontSize: 12, color: _muted)),
             children: [
@@ -268,8 +270,11 @@ class _HomePageState extends State<HomePage> {
           action: '加载',
           onTap: () => browse.loadLabel(label));
     }
-    final entries = feed.entries;
+    final filters = _catalogFilters[label] ?? const CatalogFilters();
+    final entries = ranked ? feed.entries : filters.apply(feed.groups);
     return Column(children: [
+      if (!ranked && label != '电视直播')
+        _filters(label, feed, filters, entries.length),
       if (ranked)
         for (final entry in entries)
           Padding(
@@ -298,9 +303,16 @@ class _HomePageState extends State<HomePage> {
             onTap: () =>
                 browse.loadLabel(label, more: feed.loaded, retry: true)),
       if (!feed.loading && feed.error == null && entries.isEmpty)
-        _Feedback(message: feed.hasMore ? '暂未取得内容，可继续加载其他子分类' : '该分类暂无内容'),
+        _Feedback(
+            message: !ranked && feed.entries.isNotEmpty
+                ? '当前已加载内容没有匹配项，可调整筛选或加载更多'
+                : feed.hasMore
+                    ? '暂未取得内容，可继续加载其他子分类'
+                    : '该分类暂无内容'),
       if (feed.issues.isNotEmpty && feed.error == null)
         ExpansionTile(
+            key: PageStorageKey(
+                'source-issues-${ranked ? 'ranking' : 'home'}-$label'),
             title: const Text('部分来源加载失败', style: TextStyle(fontSize: 12)),
             children: [
               TextButton(
@@ -312,6 +324,176 @@ class _HomePageState extends State<HomePage> {
             onPressed: () => browse.loadLabel(label, more: true),
             child: const Text('加载更多')),
     ]);
+  }
+
+  Widget _filterRow(String label, String selected, List<String> values,
+          ValueChanged<String> onChanged,
+          {Set<String> disabled = const {}}) =>
+      Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(children: [
+            SizedBox(
+                width: 32,
+                child: Text(label,
+                    style: const TextStyle(fontSize: 11, color: _muted))),
+            Expanded(
+                child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(children: [
+                      for (final value in values)
+                        Padding(
+                            padding: const EdgeInsets.only(right: 3),
+                            child: ChoiceChip(
+                              key: ValueKey('filter-$category-$label-$value'),
+                              label: Text(value.isEmpty ? '全部' : value),
+                              selected: selected == value,
+                              showCheckmark: false,
+                              onSelected: disabled.contains(value)
+                                  ? null
+                                  : (_) => onChanged(value),
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                              visualDensity: VisualDensity.compact,
+                              side: BorderSide.none,
+                              shape: const StadiumBorder(),
+                              backgroundColor: Colors.transparent,
+                              selectedColor: _orange.withValues(alpha: 0.12),
+                              labelStyle: TextStyle(
+                                  fontSize: 11,
+                                  color: disabled.contains(value)
+                                      ? _muted
+                                      : selected == value
+                                          ? _orange
+                                          : _ink),
+                            )),
+                    ]))),
+          ]));
+
+  Widget _filters(
+      String label, DirectoryFeed feed, CatalogFilters filters, int count) {
+    final all = feed.rawEntries;
+    final hot = all.any((e) => (e.popularity ?? 0) > 0);
+    final rated = all.any((e) => e.rating != null);
+    void change(CatalogFilters next) =>
+        setState(() => _catalogFilters[label] = next);
+    List<String> options(Iterable<String> values) =>
+        ['', ...values.where((v) => v.isNotEmpty).toSet()];
+    final years = {
+      for (var i = 0; i < 10; i++) '${DateTime.now().year - i}',
+      filters.year,
+      ...all.map((e) => catalogYear(e.year))
+    }..remove('');
+    final sortedYears = years.toList()..sort((a, b) => b.compareTo(a));
+    return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _filterRow(
+              '排序',
+              switch (filters.order) {
+                CatalogOrder.latest => '最新',
+                CatalogOrder.popular => '最热',
+                CatalogOrder.rating => '好评'
+              },
+              ['最新', '最热', '好评'],
+              (value) => change(filters.copyWith(
+                      order: switch (value) {
+                    '最热' => CatalogOrder.popular,
+                    '好评' => CatalogOrder.rating,
+                    _ => CatalogOrder.latest
+                  })),
+              disabled: {if (!hot) '最热', if (!rated) '好评'}),
+          _filterRow(
+              '类型',
+              filters.genre,
+              options([
+                ...catalogGenreOptions(label),
+                filters.genre,
+                ...all.expand(catalogGenres).where((g) => ![
+                      '电影',
+                      '电视',
+                      '电视剧',
+                      '连续',
+                      '连续剧',
+                      '综艺',
+                      '动漫',
+                      '国产',
+                      '国产剧',
+                      '欧美',
+                      '欧美剧',
+                      '日',
+                      '日本剧',
+                      '韩',
+                      '韩国剧',
+                      '台湾',
+                      '台湾剧',
+                      '香港',
+                      '香港剧',
+                      '短',
+                      '短剧'
+                    ].contains(g))
+              ]),
+              (value) => change(filters.copyWith(genre: value))),
+          _filterRow(
+              '地区',
+              filters.area,
+              options([
+                '大陆',
+                '香港',
+                '台湾',
+                '美国',
+                '法国',
+                '英国',
+                '日本',
+                '韩国',
+                '德国',
+                '泰国',
+                filters.area,
+                ...all.expand((e) => catalogTokens(e.area, area: true))
+              ]),
+              (value) => change(filters.copyWith(area: value))),
+          _filterRow(
+              '语言',
+              filters.language,
+              options([
+                '国语',
+                '英语',
+                '粤语',
+                '闽南语',
+                '韩语',
+                '日语',
+                '法语',
+                '德语',
+                '其它',
+                filters.language,
+                ...all.expand((e) => catalogTokens(e.language))
+              ]),
+              (value) => change(filters.copyWith(language: value))),
+          _filterRow('年份', filters.year, options(sortedYears),
+              (value) => change(filters.copyWith(year: value))),
+          Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('筛选当前已加载 ${feed.entries.length} 部 · 匹配 $count 部',
+                        style: const TextStyle(fontSize: 11, color: _muted)),
+                    const Text('加载更多可继续筛选；最新按来源更新时间，非小柚子同源片单。',
+                        style: TextStyle(fontSize: 10, color: _muted)),
+                    if (!hot || !rated)
+                      Text(
+                          '${[
+                            if (!hot) '热度',
+                            if (!rated) '评分'
+                          ].join('、')}暂无可用数据，对应排序暂不可用',
+                          style: const TextStyle(fontSize: 10, color: _muted)),
+                    if (filters.order == CatalogOrder.popular)
+                      const Text('按来源点击量排序，不是平台热度榜',
+                          style: TextStyle(fontSize: 10, color: _muted)),
+                    TextButton(
+                        onPressed: () => change(const CatalogFilters()),
+                        child: const Text('重置筛选')),
+                  ])),
+        ]));
   }
 
   Widget _rankings() => Column(children: [
@@ -396,30 +578,97 @@ class _HomePageState extends State<HomePage> {
                       style: TextStyle(color: _muted, fontSize: 12)))
             else
               SizedBox(
-                  height: 86,
+                  height: 92 + MediaQuery.textScalerOf(context).scale(12) * 4.3,
                   child: ListView.separated(
                       scrollDirection: Axis.horizontal,
                       itemCount: recent.length,
                       separatorBuilder: (_, index) => const SizedBox(width: 8),
                       itemBuilder: (_, index) {
                         final entry = recent[index];
+                        final episode =
+                            widget.library.lastWatchedEpisode(entry);
+                        final progress = episode == null
+                            ? const WatchProgress()
+                            : widget.library.watchProgress(entry.id, episode);
                         return SizedBox(
-                            width: 96,
-                            child: InkWell(
-                                onTap: () => _detail(entry),
-                                child: Column(children: [
-                                  ClipRRect(
-                                      borderRadius: BorderRadius.circular(5),
-                                      child: SizedBox(
-                                          height: 54,
-                                          width: 96,
-                                          child: _Poster(entry: entry))),
-                                  const SizedBox(height: 5),
-                                  Text(entry.title,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontSize: 11)),
-                                ])));
+                            width: 128,
+                            child: Tooltip(
+                                message: widget.library.watchSummary(entry),
+                                child: InkWell(
+                                    onTap: () => _detail(entry),
+                                    child: Column(children: [
+                                      ClipRRect(
+                                          borderRadius:
+                                              BorderRadius.circular(5),
+                                          child: SizedBox(
+                                              height: 72,
+                                              width: 128,
+                                              child: Stack(
+                                                  fit: StackFit.expand,
+                                                  children: [
+                                                    _Poster(entry: entry),
+                                                    if (episode != null)
+                                                      Positioned(
+                                                          right: 4,
+                                                          bottom: 5,
+                                                          child: Container(
+                                                              padding: const EdgeInsets.symmetric(
+                                                                  horizontal: 4,
+                                                                  vertical: 1),
+                                                              decoration: BoxDecoration(
+                                                                  color: Colors
+                                                                      .black54,
+                                                                  borderRadius:
+                                                                      BorderRadius.circular(
+                                                                          3)),
+                                                              child: Text(
+                                                                  progress.completed
+                                                                      ? '已看完'
+                                                                      : WatchProgress.time(
+                                                                          progress
+                                                                              .positionMs),
+                                                                  style: const TextStyle(
+                                                                      color: Colors
+                                                                          .white,
+                                                                      fontSize: 10)))),
+                                                    Positioned(
+                                                        left: 0,
+                                                        right: 0,
+                                                        bottom: 0,
+                                                        child: LinearProgressIndicator(
+                                                            minHeight: 2,
+                                                            value: (progress
+                                                                        .percent ??
+                                                                    0) /
+                                                                100)),
+                                                  ]))),
+                                      const SizedBox(height: 5),
+                                      Text(entry.title,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 11)),
+                                      Text(
+                                          [
+                                            entry.source,
+                                            if (episode != null) episode.name
+                                          ].join(' · '),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              fontSize: 10, color: _muted)),
+                                      Text(
+                                          episode == null
+                                              ? '暂无分集进度'
+                                              : progress.completed
+                                                  ? '已看完 · 100%'
+                                                  : progress.percent == null
+                                                      ? progress.label
+                                                      : '已观看 ${progress.percent}%',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              fontSize: 10, color: _orange)),
+                                    ]))));
                       })),
           ])),
           const SizedBox(height: 12),
@@ -494,10 +743,19 @@ class _HomePageState extends State<HomePage> {
             const Icon(Icons.history, size: 18, color: _muted),
             const SizedBox(width: 8),
             Expanded(
-                child: Text(entry.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12))),
+                child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(entry.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12)),
+                  Text(widget.library.watchSummary(entry),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 10, color: _muted)),
+                ])),
             TextButton(
                 onPressed: () => _detail(entry),
                 child: const Text('继续观看', style: TextStyle(fontSize: 12))),
@@ -568,31 +826,40 @@ class _FeedLoading extends StatelessWidget {
 }
 
 class _Poster extends StatelessWidget {
-  const _Poster({required this.entry});
+  const _Poster(
+      {required this.entry,
+      this.fit = BoxFit.cover,
+      this.landscape = false,
+      this.fallback});
   final MediaEntry entry;
+  final BoxFit fit;
+  final bool landscape;
+  final Widget? fallback;
   @override
   Widget build(BuildContext context) {
-    final placeholder = ColoredBox(
-        color: const Color(0xffe8e8e8),
-        child: Center(
-            child: Icon(Icons.movie_outlined,
-                size: 28, color: Colors.grey.shade400)));
-    final uri = Uri.tryParse(entry.poster);
-    if (uri == null ||
-        uri.scheme != 'https' ||
-        uri.host.isEmpty ||
-        uri.userInfo.isNotEmpty) {
-      return placeholder;
+    final placeholder = fallback ??
+        ColoredBox(
+            color: const Color(0xffe8e8e8),
+            child: Center(
+                child: Icon(Icons.movie_outlined,
+                    size: 28, color: Colors.grey.shade400)));
+    final urls =
+        landscape ? catalogImageUrls([entry.backdrop]) : entry.posterCandidates;
+    Widget imageAt(int index) {
+      if (index >= urls.length) return placeholder;
+      return Image.network(urls[index],
+          key: ValueKey(urls[index]),
+          fit: fit,
+          width: double.infinity,
+          height: double.infinity,
+          excludeFromSemantics: true,
+          cacheWidth: landscape ? 1200 : 600,
+          errorBuilder: (_, error, stack) => imageAt(index + 1),
+          loadingBuilder: (_, child, loading) =>
+              loading == null ? child : placeholder);
     }
-    return Image.network(entry.poster,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        excludeFromSemantics: true,
-        cacheWidth: 600,
-        errorBuilder: (_, error, stack) => placeholder,
-        loadingBuilder: (_, child, loading) =>
-            loading == null ? child : placeholder);
+
+    return imageAt(0);
   }
 }
 
@@ -689,7 +956,7 @@ class _SpotlightState extends State<_Spotlight> {
                     return InkWell(
                         onTap: () => widget.onTap(entry),
                         child: Stack(fit: StackFit.expand, children: [
-                          _Poster(entry: entry),
+                          _SpotlightArtwork(entry: entry),
                           const DecoratedBox(
                               decoration: BoxDecoration(
                                   gradient: LinearGradient(
@@ -729,11 +996,47 @@ class _SpotlightState extends State<_Spotlight> {
       );
 }
 
+class _SpotlightArtwork extends StatelessWidget {
+  const _SpotlightArtwork({required this.entry});
+  final MediaEntry entry;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+      color: const Color(0xff272936),
+      child: _Poster(
+          entry: entry,
+          landscape: true,
+          fit: BoxFit.contain,
+          fallback: Row(children: [
+            AspectRatio(
+                aspectRatio: .68,
+                child: _Poster(entry: entry, fit: BoxFit.contain)),
+            Expanded(
+                child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 36),
+                    child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                            [entry.year, entry.area, entry.remarks]
+                                .where((value) => value.isNotEmpty)
+                                .join(' · '),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 12))))),
+          ])));
+}
+
 class _CatalogCard extends StatelessWidget {
-  const _CatalogCard({required this.entry, required this.onTap, this.trailing});
+  const _CatalogCard(
+      {required this.entry,
+      required this.onTap,
+      this.trailing,
+      this.watchInfo});
   final MediaEntry entry;
   final VoidCallback onTap;
   final Widget? trailing;
+  final String? watchInfo;
   @override
   Widget build(BuildContext context) => Material(
         color: Colors.white,
@@ -771,10 +1074,13 @@ class _CatalogCard extends StatelessWidget {
                           style: const TextStyle(fontSize: 10, color: _muted)),
                       const SizedBox(height: 6),
                       Text(
-                          entry.description.isEmpty
-                              ? (entry.remarks.isEmpty ? '暂无简介' : entry.remarks)
-                              : entry.description,
-                          maxLines: 2,
+                          watchInfo ??
+                              (entry.description.isEmpty
+                                  ? (entry.remarks.isEmpty
+                                      ? '暂无简介'
+                                      : entry.remarks)
+                                  : entry.description),
+                          maxLines: watchInfo == null ? 2 : 3,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                               fontSize: 11, height: 1.4, color: _muted)),
@@ -830,6 +1136,7 @@ class _SavedEntries extends StatelessWidget {
               final entry = entries[index];
               return _CatalogCard(
                   entry: entry,
+                  watchInfo: favorites ? null : library.watchSummary(entry),
                   trailing: favorites
                       ? IconButton(
                           tooltip: '取消收藏',

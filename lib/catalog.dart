@@ -102,6 +102,8 @@ class MediaEntry {
     required this.source,
     this.remoteId,
     this.poster = '',
+    this.posterFallbacks = const [],
+    this.backdrop = '',
     this.description = '',
     this.category = '',
     this.categoryId = '',
@@ -112,6 +114,10 @@ class MediaEntry {
     this.language = '',
     this.duration = '',
     this.remarks = '',
+    this.genres = '',
+    this.rating,
+    this.popularity,
+    this.updatedAtMs,
     this.lines = const {},
   });
 
@@ -120,6 +126,8 @@ class MediaEntry {
   final String source;
   final String? remoteId;
   final String poster;
+  final List<String> posterFallbacks;
+  final String backdrop;
   final String description;
   final String category;
   final String categoryId;
@@ -130,9 +138,36 @@ class MediaEntry {
   final String language;
   final String duration;
   final String remarks;
+  final String genres;
+  final double? rating;
+  final int? popularity;
+  final int? updatedAtMs;
   final Map<String, List<Episode>> lines;
 
   bool get playable => lines.values.any((episodes) => episodes.isNotEmpty);
+
+  List<String> get posterCandidates =>
+      catalogImageUrls([poster, ...posterFallbacks]);
+
+  MediaEntry withArtworkFrom(Iterable<MediaEntry> variants) {
+    final fallbacks = catalogImageUrls([
+      ...posterFallbacks,
+      for (final entry in variants) ...entry.posterCandidates,
+    ])
+      ..remove(catalogImageUrls([poster]).firstOrNull);
+    final backdrops = catalogImageUrls([
+      backdrop,
+      for (final entry in variants) entry.backdrop,
+    ]);
+    if (fallbacks.isEmpty && (backdrops.firstOrNull ?? '') == backdrop) {
+      return this;
+    }
+    return MediaEntry.fromJson({
+      ...toJson(),
+      'posterFallbacks': fallbacks,
+      'backdrop': backdrops.firstOrNull ?? '',
+    });
+  }
 
   static List<MediaEntry> parseResponse(Object? value, String source) {
     // Common JSON-list dialect, NOT evidence of the APK's upstream protocol.
@@ -185,6 +220,11 @@ class MediaEntry {
         source: source,
         remoteId: (item['vod_id'] ?? item['id'])?.toString(),
         poster: (item['vod_pic'] ?? item['poster'] ?? '').toString(),
+        backdrop: catalogImageUrls([
+              (item['vod_pic_slide'] ?? '').toString(),
+              (item['backdrop'] ?? '').toString(),
+            ]).firstOrNull ??
+            '',
         description:
             cleanCatalogText(item['vod_content'] ?? item['description']),
         category: cleanCatalogText(item['type_name']),
@@ -196,6 +236,12 @@ class MediaEntry {
         language: cleanCatalogText(item['vod_lang']),
         duration: cleanCatalogText(item['vod_duration']),
         remarks: cleanCatalogText(item['vod_remarks']),
+        genres: cleanCatalogText(item['vod_class']),
+        rating: catalogRating(item['vod_douban_score']) ??
+            catalogRating(item['vod_score']),
+        popularity: catalogCount(item['vod_hits']),
+        updatedAtMs:
+            catalogDate(item['vod_time']) ?? catalogDate(item['vod_time_add']),
         lines: lines,
       ));
     }
@@ -208,6 +254,8 @@ class MediaEntry {
         'source': source,
         'remoteId': remoteId,
         'poster': poster,
+        'posterFallbacks': posterFallbacks,
+        'backdrop': backdrop,
         'description': description,
         'category': category,
         'categoryId': categoryId,
@@ -218,6 +266,10 @@ class MediaEntry {
         'language': language,
         'duration': duration,
         'remarks': remarks,
+        'genres': genres,
+        'rating': rating,
+        'popularity': popularity,
+        'updatedAtMs': updatedAtMs,
         'lines': lines.map((key, episodes) => MapEntry(
               key,
               episodes.map((e) => {'name': e.name, 'url': e.url}).toList(),
@@ -249,6 +301,11 @@ class MediaEntry {
       source: value['source'].toString(),
       remoteId: value['remoteId']?.toString(),
       poster: value['poster']?.toString() ?? '',
+      posterFallbacks: value['posterFallbacks'] is List
+          ? catalogImageUrls(
+              (value['posterFallbacks'] as List).whereType<String>())
+          : const [],
+      backdrop: value['backdrop']?.toString() ?? '',
       description: value['description']?.toString() ?? '',
       category: value['category']?.toString() ?? '',
       categoryId: value['categoryId']?.toString() ?? '',
@@ -259,6 +316,10 @@ class MediaEntry {
       language: value['language']?.toString() ?? '',
       duration: value['duration']?.toString() ?? '',
       remarks: value['remarks']?.toString() ?? '',
+      genres: value['genres']?.toString() ?? '',
+      rating: catalogRating(value['rating']),
+      popularity: catalogCount(value['popularity']),
+      updatedAtMs: catalogCount(value['updatedAtMs']),
       lines: lines,
     );
   }
@@ -266,6 +327,18 @@ class MediaEntry {
   static String encodeList(Iterable<MediaEntry> items) =>
       jsonEncode(items.map((item) => item.toJson()).toList());
 }
+
+List<String> catalogImageUrls(Iterable<String> values) => values
+    .map((value) => value.trim().replaceAll('&amp;', '&'))
+    .where((value) {
+      final uri = Uri.tryParse(value);
+      return uri != null &&
+          uri.scheme == 'https' &&
+          uri.host.isNotEmpty &&
+          uri.userInfo.isEmpty;
+    })
+    .toSet()
+    .toList();
 
 String cleanCatalogText(Object? value) => (value ?? '')
     .toString()
@@ -275,6 +348,31 @@ String cleanCatalogText(Object? value) => (value ?? '')
     .replaceAll('&quot;', '"')
     .replaceAll(RegExp(r'\s+'), ' ')
     .trim();
+
+double? catalogRating(Object? value) {
+  final number = double.tryParse('$value');
+  return number != null && number.isFinite && number > 0 && number <= 10
+      ? number
+      : null;
+}
+
+int? catalogCount(Object? value) {
+  final number = int.tryParse('$value');
+  return number != null && number > 0 ? number : null;
+}
+
+int? catalogDate(Object? value) {
+  final number = catalogCount(value);
+  final date = number == null
+      ? DateTime.tryParse('$value')
+      : number > 0 && number < 100000000000000
+          ? DateTime.fromMillisecondsSinceEpoch(
+              number < 100000000000 ? number * 1000 : number)
+          : null;
+  return date != null && date.year >= 1900 && date.year <= 2200
+      ? date.millisecondsSinceEpoch
+      : null;
+}
 
 String catalogKind(String category) {
   if (category.contains('漫剧')) return 'AI漫剧';
@@ -300,8 +398,9 @@ String catalogIdentity(MediaEntry entry) {
 class CatalogGroup {
   CatalogGroup(this.entries);
   final List<MediaEntry> entries;
-  MediaEntry get primary => entries.firstWhere((entry) => entry.playable,
-      orElse: () => entries.first);
+  MediaEntry get primary => entries
+      .firstWhere((entry) => entry.playable, orElse: () => entries.first)
+      .withArtworkFrom(entries);
 }
 
 List<CatalogGroup> groupCatalog(Iterable<MediaEntry> entries,

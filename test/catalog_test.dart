@@ -7,6 +7,143 @@ import 'package:youying/catalog.dart';
 import 'package:youying/library.dart';
 
 void main() {
+  test('artwork metadata is optional and survives old and new records', () {
+    final old =
+        MediaEntry.fromJson({'id': 'old', 'title': '旧记录', 'source': 'A'});
+    expect(old.posterCandidates, isEmpty);
+    expect(old.backdrop, isEmpty);
+    final entry = MediaEntry.parseResponse({
+      'list': [
+        {
+          'vod_id': 1,
+          'vod_name': '新记录',
+          'vod_pic': 'https://example.com/poster.jpg',
+          'vod_pic_slide': 'https://example.com/banner.jpg',
+        }
+      ]
+    }, 'A')
+        .single;
+    final restored = MediaEntry.fromJson(entry.toJson());
+    expect(restored.posterCandidates, ['https://example.com/poster.jpg']);
+    expect(restored.backdrop, 'https://example.com/banner.jpg');
+    for (final slide in ['', 'http://example.com/invalid.jpg']) {
+      expect(
+          MediaEntry.parseResponse({
+            'list': [
+              {
+                'vod_id': 2,
+                'vod_name': '横图兼容',
+                'vod_pic_slide': slide,
+                'backdrop': 'https://example.com/backdrop.jpg',
+              }
+            ]
+          }, 'A')
+              .single
+              .backdrop,
+          'https://example.com/backdrop.jpg');
+    }
+    expect(
+        MediaEntry.fromJson({
+          ...entry.toJson(),
+          'posterFallbacks': [null, 4]
+        }).posterFallbacks,
+        isEmpty);
+  });
+
+  test('same-work artwork fallback never changes playback ownership', () {
+    const primary = MediaEntry(
+        id: 'A:1',
+        remoteId: '1',
+        title: '同片',
+        source: 'A',
+        year: '2026',
+        category: '国产剧',
+        poster: 'https://a.example/blocked.jpg',
+        lines: {
+          '主线': [Episode(name: '1', url: 'https://a.example/1.mp4')]
+        });
+    const alternative = MediaEntry(
+        id: 'B:2',
+        title: '同片',
+        source: 'B',
+        year: '2026',
+        category: '电视剧',
+        poster: 'https://b.example/working.jpg',
+        backdrop: 'https://b.example/wide.jpg');
+    final group = groupCatalog([primary, alternative]).single;
+    final entry = group.primary;
+    expect(entry.id, primary.id);
+    expect(entry.remoteId, primary.remoteId);
+    expect(entry.source, primary.source);
+    expect(entry.lines['主线']!.single.url, primary.lines['主线']!.single.url);
+    expect(entry.posterCandidates,
+        ['https://a.example/blocked.jpg', 'https://b.example/working.jpg']);
+    final restored = MediaEntry.fromJson(entry.toJson());
+    expect(restored.posterCandidates, entry.posterCandidates);
+    expect(restored.backdrop, alternative.backdrop);
+    expect(primary.posterFallbacks, isEmpty);
+  });
+
+  test('artwork candidates reject unsafe URLs, deduplicate and isolate remakes',
+      () {
+    expect(
+        catalogImageUrls([
+          ' https://example.com/p.jpg?a=1&amp;b=2 ',
+          'https://example.com/p.jpg?a=1&b=2',
+          'http://example.com/plain.jpg',
+          'file:///tmp/a',
+          'https://user:password@example.com/p.jpg',
+          '',
+        ]),
+        ['https://example.com/p.jpg?a=1&b=2']);
+    final groups = groupCatalog([
+      const MediaEntry(
+          id: '1', title: '同名', source: 'A', year: '2026', category: '电影'),
+      const MediaEntry(
+          id: '2',
+          title: '同名',
+          source: 'B',
+          year: '2020',
+          category: '电影',
+          poster: 'https://example.com/remake.jpg'),
+    ]);
+    expect(groups.first.primary.posterCandidates, isEmpty);
+    expect(groups, hasLength(2));
+  });
+
+  test('detail keeps same-resource artwork alternatives from its listing',
+      () async {
+    final client = CatalogClient(
+        client: MockClient((_) async => http.Response(
+            jsonEncode({
+              'list': [
+                {
+                  'vod_id': 1,
+                  'vod_name': '同片',
+                  'vod_pic': 'https://a.example/new.jpg'
+                }
+              ]
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'})));
+    addTearDown(client.dispose);
+    final result = await client.detail(
+        const SourceEndpoint(name: 'A', url: 'https://a.example/api'),
+        const MediaEntry(
+            id: 'A:1',
+            remoteId: '1',
+            title: '同片',
+            source: 'A',
+            poster: 'https://a.example/old.jpg',
+            posterFallbacks: ['https://b.example/p.jpg']));
+    expect(result.posterCandidates, [
+      'https://a.example/new.jpg',
+      'https://a.example/old.jpg',
+      'https://b.example/p.jpg'
+    ]);
+    expect(result.source, 'A');
+  });
+
   test(
       'detail metadata survives persistence and numbered episodes match across lines',
       () {
@@ -207,6 +344,64 @@ void main() {
           ]
         }, 'test'),
         isEmpty);
+  });
+
+  test('catalog facet and sorting metadata survive history serialization', () {
+    final entry = MediaEntry.parseResponse({
+      'list': [
+        {
+          'vod_id': 1,
+          'vod_name': '测试',
+          'vod_class': '动作,冒险',
+          'vod_area': '中国大陆',
+          'vod_lang': '汉语普通话',
+          'vod_year': '2026',
+          'vod_douban_score': '8.2',
+          'vod_hits': '120',
+          'vod_time': '2026-01-02 10:00:00',
+        }
+      ]
+    }, 'A')
+        .single;
+    final restored =
+        MediaEntry.fromJson(jsonDecode(MediaEntry.encodeList([entry]))[0]);
+    expect(restored.genres, '动作,冒险');
+    expect(restored.rating, 8.2);
+    expect(restored.popularity, 120);
+    expect(
+        restored.updatedAtMs, DateTime(2026, 1, 2, 10).millisecondsSinceEpoch);
+    expect(
+        MediaEntry.fromJson({'id': 'old', 'title': '旧记录', 'source': 'A'})
+            .rating,
+        isNull);
+  });
+
+  test('missing zero and invalid metrics never fabricate rating or popularity',
+      () {
+    for (final value in ['NaN', 'Infinity', '-1', '100', '']) {
+      expect(catalogRating(value), isNull);
+    }
+    expect(catalogRating('0'), isNull);
+    expect(catalogCount('0'), isNull);
+    expect(catalogCount('-1'), isNull);
+    expect(catalogCount('1.5'), isNull);
+    expect(catalogDate('0'), isNull);
+    expect(catalogDate('invalid'), isNull);
+    expect(catalogDate('999999999999999999999'), isNull);
+    expect(catalogDate('1767225600'), catalogDate('1767225600000'));
+    final entry = MediaEntry.parseResponse({
+      'list': [
+        {
+          'vod_name': '测试',
+          'vod_douban_score': '0',
+          'vod_score': '7.5',
+          'vod_hits': '0'
+        }
+      ]
+    }, 'A')
+        .single;
+    expect(entry.rating, 7.5);
+    expect(entry.popularity, isNull);
   });
 
   test('duplicate line names preserve both source groups', () {

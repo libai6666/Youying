@@ -48,6 +48,93 @@ void main() {
     SharedPreferencesAsyncPlatform.instance = store;
   });
 
+  const episodes = [
+    Episode(name: '第01集', url: 'https://example.com/1.mp4'),
+    Episode(name: '第02集', url: 'https://example.com/2.mp4')
+  ];
+  const watchedEntry = MediaEntry(
+      id: 'watch:1', title: '进度测试', source: '测试来源', lines: {'主线': episodes});
+
+  test(
+      'episode duration, completion and the most recent episode survive reload',
+      () async {
+    final library = await Library.open();
+    await library.recordPlay(watchedEntry,
+        episode: episodes.first, position: 30000, duration: 60000);
+    expect(library.watchProgress(watchedEntry.id, episodes.first).percent, 50);
+    await library.recordPlay(watchedEntry,
+        episode: episodes.first,
+        position: 60000,
+        duration: 60000,
+        completed: true);
+    await library.recordPlay(watchedEntry,
+        episode: episodes.last, position: 15000, duration: 60000);
+    final restored = await Library.open();
+    expect(restored.watchProgress(watchedEntry.id, episodes.first).completed,
+        true);
+    expect(
+        restored.watchProgress(watchedEntry.id, episodes.first).percent, 100);
+    expect(restored.resumePosition(watchedEntry.id, episodes.first), 60000);
+    expect(restored.lastWatchedEpisode(watchedEntry)!.url, episodes.last.url);
+    expect(restored.watchSummary(watchedEntry),
+        '测试来源 · 第02集 · 已观看 25% · 0:15 / 1:00');
+    await restored.recordPlay(watchedEntry, episode: episodes.first);
+    expect(restored.watchProgress(watchedEntry.id, episodes.first).completed,
+        true);
+    library.dispose();
+    restored.dispose();
+  });
+
+  test(
+      'rapid playback saves stay ordered and a failed write does not block later saves',
+      () async {
+    final library = await Library.open();
+    await Future.wait([
+      library.recordPlay(watchedEntry,
+          episode: episodes.first, position: 10000, duration: 60000),
+      library.recordPlay(watchedEntry,
+          episode: episodes.first,
+          position: 60000,
+          duration: 60000,
+          completed: true),
+      library.recordPlay(watchedEntry,
+          episode: episodes.last, position: 30000, duration: 60000),
+    ]);
+    store.failWrites = true;
+    await expectLater(
+        library.recordPlay(watchedEntry,
+            episode: episodes.last, position: 35000),
+        throwsStateError);
+    store.failWrites = false;
+    await library.recordPlay(watchedEntry,
+        episode: episodes.last, position: 40000);
+    final restored = await Library.open();
+    expect(
+        restored.watchProgress(watchedEntry.id, episodes.first).percent, 100);
+    expect(restored.watchProgress(watchedEntry.id, episodes.last).positionMs,
+        40000);
+    expect(restored.lastWatchedEpisode(watchedEntry)!.url, episodes.last.url);
+    library.dispose();
+    restored.dispose();
+  });
+
+  test('old or malformed watch metadata never fabricates a viewing percentage',
+      () async {
+    store.values['positions'] = jsonEncode(
+        {Library.episodeKey(watchedEntry.id, episodes.first): 15000});
+    for (final bad in ['invalid json', '[]', '{"episodes":false}']) {
+      store.values['watch_progress'] = bad;
+      final library = await Library.open();
+      expect(library.watchProgress(watchedEntry.id, episodes.first).percent,
+          isNull);
+      expect(library.watchProgress(watchedEntry.id, episodes.first).label,
+          contains('0:15'));
+      expect(library.watchProgress(watchedEntry.id, episodes.last).label,
+          '未观看 · 0%');
+      library.dispose();
+    }
+  });
+
   test('first load seeds seven checked presets and no retired endpoints',
       () async {
     final library = await Library.open();
@@ -338,7 +425,12 @@ void main() {
     final library = await Library.open();
     await tester.pumpWidget(
         MaterialApp(home: Scaffold(body: SettingsPage(library: library))));
-    await tester.tap(find.byType(Switch).first);
+    final sourceTile = find.ancestor(
+        of: find.byTooltip('移除360资源'), matching: find.byType(ListTile));
+    final sourceSwitch =
+        find.descendant(of: sourceTile, matching: find.byType(Switch));
+    await tester.ensureVisible(sourceSwitch);
+    await tester.tap(sourceSwitch);
     await tester.pumpAndSettle();
     expect(library.sources.first.enabled, false);
     await tester.tap(find.byTooltip('移除360资源'));
@@ -346,5 +438,90 @@ void main() {
     expect(library.sources.any((s) => s.name == '360资源'), false);
     expect((await Library.open()).sources.any((s) => s.name == '360资源'), false);
     expect(tester.takeException(), isNull);
+  });
+
+  test(
+      'search history persists, trims, deduplicates and limits recent keywords',
+      () async {
+    final library = await Library.open();
+    await library.recordSearch('  测试片名  ');
+    await library.recordSearch('Another');
+    await library.recordSearch(' another ');
+    await library.recordSearch('   ');
+    expect(library.searchHistory, ['another', '测试片名']);
+    expect((await Library.open()).searchHistory, ['another', '测试片名']);
+    for (var index = 0; index < 25; index++) {
+      await library.recordSearch('片名$index');
+    }
+    expect(library.searchHistory, hasLength(Library.maxSearchHistory));
+    expect(library.searchHistory.first, '片名24');
+    await library.removeSearch('片名24');
+    expect((await Library.open()).searchHistory.first, '片名23');
+    await library.clearSearchHistory();
+    expect((await Library.open()).searchHistory, isEmpty);
+    expect(library.history, isEmpty);
+  });
+
+  test(
+      'clearing serializes with rapid searches and cannot restore old keywords',
+      () async {
+    final library = await Library.open();
+    final first = library.recordSearch('第一部');
+    final second = library.recordSearch('第二部');
+    final clear = library.clearSearchHistory();
+    await Future.wait([first, second, clear]);
+    expect(library.searchHistory, isEmpty);
+    expect((await Library.open()).searchHistory, isEmpty);
+  });
+
+  test(
+      'corrupt search history is ignored without rewriting other persisted data',
+      () async {
+    store.values['search_history'] = '{broken';
+    final library = await Library.open();
+    expect(library.searchHistory, isEmpty);
+    expect(store.values['search_history'], '{broken');
+    store.values['search_history'] = jsonEncode(['', 12, ' A ', 'a', 'B']);
+    expect((await Library.open()).searchHistory, ['A', 'B']);
+    store.values['search_history'] = '{}';
+    expect((await Library.open()).searchHistory, isEmpty);
+  });
+
+  test(
+      'failed history writes preserve existing state and later edits can recover',
+      () async {
+    final library = await Library.open();
+    await library.recordSearch('保留');
+    store.failWrites = true;
+    await expectLater(library.clearSearchHistory(), throwsStateError);
+    expect(library.searchHistory, ['保留']);
+    store.failWrites = false;
+    await library.recordSearch('恢复');
+    expect(library.searchHistory, ['恢复', '保留']);
+  });
+
+  test(
+      'auto-next defaults on, persists off and does not change after a failed write',
+      () async {
+    final library = await Library.open();
+    expect(library.autoPlayNext, true);
+    await library.setAutoPlayNext(false);
+    expect((await Library.open()).autoPlayNext, false);
+    store.failWrites = true;
+    await expectLater(library.setAutoPlayNext(true), throwsStateError);
+    expect(library.autoPlayNext, false);
+  });
+
+  testWidgets('settings exposes an enabled-by-default auto-next switch',
+      (tester) async {
+    final library = await Library.open();
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: SettingsPage(library: library))));
+    final setting = find.widgetWithText(SwitchListTile, '自动续播下一集');
+    expect(tester.widget<SwitchListTile>(setting).value, true);
+    await tester.tap(setting);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(setting).value, false);
+    expect((await Library.open()).autoPlayNext, false);
   });
 }

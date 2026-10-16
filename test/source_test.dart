@@ -428,8 +428,10 @@ void main() {
         home: Scaffold(body: SearchPage(library: library, client: client))));
     expect(requested, isEmpty);
     await tester.enterText(find.byType(TextField), 'query');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(TextButton, '搜索'));
+    await tester.pump();
     await tester.runAsync(() async {
-      await tester.tap(find.byTooltip('搜索'));
       await Future<void>.delayed(const Duration(milliseconds: 50));
     });
     await tester.pumpAndSettle();

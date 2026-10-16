@@ -90,103 +90,24 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage> {
   final TextEditingController query = TextEditingController();
-  late final CatalogClient client = widget.client ?? CatalogClient();
-  List<MediaEntry> results = [];
-  List<CatalogGroup> groups = [];
-  String filter = '全部';
-  int _generation = 0;
-  String _sourceFingerprint = '';
-  bool searching = false;
-  String? status;
-  final List<String> sourceResults = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _sourceFingerprint = jsonEncode(
-        widget.library.enabledSources.map((s) => s.toJson()).toList());
-    widget.library.addListener(_sourcesChanged);
-  }
-
-  void _sourcesChanged() {
-    final enabled = widget.library.enabledSources;
-    final fingerprint = jsonEncode(enabled.map((s) => s.toJson()).toList());
-    if (_sourceFingerprint == fingerprint) return;
-    _sourceFingerprint = fingerprint;
-    _generation++;
-    setState(() {
-      results
-          .removeWhere((entry) => !enabled.any((s) => s.name == entry.source));
-      groups = groupCatalog(results, query: query.text);
-      searching = false;
-      sourceResults.clear();
-      status = '来源设置已变化，请重新搜索';
-    });
-  }
 
   @override
   void dispose() {
-    _generation++;
-    widget.library.removeListener(_sourcesChanged);
-    if (widget.client == null) client.dispose();
     query.dispose();
     super.dispose();
   }
 
-  Future<void> _search() async {
-    if (query.text.trim().isEmpty || widget.library.enabledSources.isEmpty) {
-      return;
-    }
-    final generation = ++_generation;
-    setState(() {
-      searching = true;
-      results = [];
-      groups = [];
-      filter = '全部';
-      sourceResults.clear();
-      status = '正在搜索已启用的源…';
-    });
-    final searchQuery = query.text.trim();
-    unawaited(
-        _saveSearchHistory(() => widget.library.recordSearch(searchQuery)));
-    final foundBySource = <String, List<MediaEntry>>{};
-    var failed = 0;
-    final sources = List.of(widget.library.enabledSources);
-    var next = 0;
-    Future<void> worker() async {
-      while (mounted && generation == _generation && next < sources.length) {
-        final source = sources[next++];
-        String summary;
-        try {
-          final found = await client.search(source, searchQuery);
-          foundBySource[source.name] = found;
-          summary = '${source.name}：${found.length} 条';
-        } catch (_) {
-          failed++;
-          summary = '${source.name}：请求失败或返回格式不兼容';
-        }
-        if (!mounted || generation != _generation) return;
-        setState(() {
-          results = [
-            for (final source in sources) ...?foundBySource[source.name]
-          ];
-          groups = groupCatalog(results, query: searchQuery);
-          sourceResults.add(summary);
-          status =
-              '已搜索 ${sourceResults.length}/${sources.length} 个来源 · ${groups.length} 部影片';
-        });
-      }
-    }
-
-    await Future.wait(
-        List.generate(sources.length.clamp(0, 3), (_) => worker()));
-    if (!mounted || generation != _generation) return;
-    setState(() {
-      searching = false;
-      status = failed > 0
-          ? '找到 ${groups.length} 部影片 · $failed 个来源暂不可用'
-          : '找到 ${groups.length} 部影片';
-    });
+  void _openResults(String keyword) {
+    final value = keyword.trim();
+    if (value.isEmpty || widget.library.enabledSources.isEmpty) return;
+    FocusScope.of(context).unfocus();
+    Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+            builder: (_) => SearchResultsPage(
+                library: widget.library,
+                initialQuery: value,
+                client: widget.client)));
   }
 
   Future<void> _direct() async {
@@ -260,110 +181,312 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   @override
-  Widget build(BuildContext context) =>
-      ListView(padding: const EdgeInsets.all(16), children: [
-        TextField(
-          controller: query,
-          onSubmitted: (_) => _search(),
-          textInputAction: TextInputAction.search,
-          decoration: InputDecoration(
-            labelText: uiText(context, '搜索影片、电视剧、动漫'),
-            border: const OutlineInputBorder(),
-            suffixIcon: IconButton(
-              tooltip: uiText(context, '搜索'),
-              icon: const Icon(Icons.search),
-              onPressed: widget.library.enabledSources.isEmpty ? null : _search,
+  Widget build(BuildContext context) => AnimatedBuilder(
+      animation: widget.library,
+      builder: (context, _) => ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            children: [
+              _SearchInput(
+                  controller: query,
+                  enabled: widget.library.enabledSources.isNotEmpty,
+                  onSearch: () => _openResults(query.text)),
+              const SizedBox(height: 20),
+              Builder(builder: (context) {
+                final history = widget.library.searchHistory;
+                if (history.isEmpty) return const SizedBox.shrink();
+                return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        Expanded(
+                            child: LocalizedText('搜索历史',
+                                style: Theme.of(context).textTheme.titleSmall)),
+                        TextButton.icon(
+                            onPressed: _clearSearchHistory,
+                            icon: const Icon(Icons.delete_outline, size: 18),
+                            label: const LocalizedText('清空')),
+                      ]),
+                      const SizedBox(height: 4),
+                      Wrap(spacing: 8, runSpacing: 4, children: [
+                        for (final keyword in history)
+                          InputChip(
+                              backgroundColor: const Color(0xfff6f7f8),
+                              side: BorderSide.none,
+                              deleteIcon: const Icon(Icons.close, size: 16),
+                              label: Text(keyword,
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
+                              onPressed: () => _openResults(keyword),
+                              deleteButtonTooltipMessage:
+                                  uiText(context, '删除搜索记录：$keyword'),
+                              onDeleted: () => _saveSearchHistory(
+                                  () => widget.library.removeSearch(keyword))),
+                      ]),
+                    ]);
+              }),
+              const SizedBox(height: 16),
+              if (widget.library.enabledSources.isEmpty)
+                const LocalizedText('没有启用的源，请在“设置”中启用或添加。'),
+              Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: _direct,
+                    icon: const Icon(Icons.play_circle_outline, size: 18),
+                    label: const LocalizedText('手动播放直链'),
+                  )),
+            ],
+          ));
+}
+
+class _SearchInput extends StatelessWidget {
+  const _SearchInput(
+      {required this.controller,
+      required this.enabled,
+      required this.onSearch});
+  final TextEditingController controller;
+  final bool enabled;
+  final VoidCallback onSearch;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) => Row(children: [
+            Expanded(
+              child: TextField(
+                controller: controller,
+                onSubmitted: (_) => onSearch(),
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  hintText: uiText(context, '搜索影片、电视剧、动漫'),
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  suffixIcon: controller.text.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: uiText(context, '清空'),
+                          icon: const Icon(Icons.close, size: 18),
+                          onPressed: controller.clear),
+                  isDense: true,
+                  filled: true,
+                  fillColor: const Color(0xfff6f7f8),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(26),
+                      borderSide: BorderSide.none),
+                ),
+              ),
             ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        AnimatedBuilder(
-            animation: widget.library,
-            builder: (context, _) {
-              final history = widget.library.searchHistory;
-              if (history.isEmpty) return const SizedBox.shrink();
-              return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(width: 8),
+            TextButton(
+                onPressed: enabled && controller.text.trim().isNotEmpty
+                    ? onSearch
+                    : null,
+                child: const LocalizedText('搜索')),
+          ]));
+}
+
+class SearchResultsPage extends StatefulWidget {
+  const SearchResultsPage(
+      {super.key,
+      required this.library,
+      required this.initialQuery,
+      this.client});
+  final Library library;
+  final String initialQuery;
+  final CatalogClient? client;
+
+  @override
+  State<SearchResultsPage> createState() => _SearchResultsPageState();
+}
+
+class _SearchResultsPageState extends State<SearchResultsPage> {
+  final TextEditingController query = TextEditingController();
+  late final CatalogClient client = widget.client ?? CatalogClient();
+  List<MediaEntry> results = [];
+  List<CatalogGroup> groups = [];
+  String filter = '全部';
+  int _generation = 0;
+  String _sourceFingerprint = '';
+  bool searching = false;
+  String? status;
+  final List<String> sourceResults = [];
+
+  @override
+  void initState() {
+    super.initState();
+    query.text = widget.initialQuery;
+    _sourceFingerprint = jsonEncode(
+        widget.library.enabledSources.map((s) => s.toJson()).toList());
+    widget.library.addListener(_sourcesChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_search());
+    });
+  }
+
+  void _sourcesChanged() {
+    final enabled = widget.library.enabledSources;
+    final fingerprint = jsonEncode(enabled.map((s) => s.toJson()).toList());
+    if (_sourceFingerprint == fingerprint) return;
+    _sourceFingerprint = fingerprint;
+    _generation++;
+    setState(() {
+      results
+          .removeWhere((entry) => !enabled.any((s) => s.name == entry.source));
+      groups = groupCatalog(results, query: query.text);
+      searching = false;
+      sourceResults.clear();
+      status = '来源设置已变化，请重新搜索';
+    });
+  }
+
+  @override
+  void dispose() {
+    _generation++;
+    widget.library.removeListener(_sourcesChanged);
+    if (widget.client == null) client.dispose();
+    query.dispose();
+    super.dispose();
+  }
+
+  Future<void> _search() async {
+    if (query.text.trim().isEmpty || widget.library.enabledSources.isEmpty) {
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    final generation = ++_generation;
+    setState(() {
+      searching = true;
+      results = [];
+      groups = [];
+      filter = '全部';
+      sourceResults.clear();
+      status = '正在搜索已启用的源…';
+    });
+    final searchQuery = query.text.trim();
+    unawaited(_recordSearchHistory(searchQuery));
+    final foundBySource = <String, List<MediaEntry>>{};
+    var failed = 0;
+    final sources = List.of(widget.library.enabledSources);
+    var next = 0;
+    Future<void> worker() async {
+      while (mounted && generation == _generation && next < sources.length) {
+        final source = sources[next++];
+        String summary;
+        try {
+          final found = await client.search(source, searchQuery);
+          foundBySource[source.name] = found;
+          summary = '${source.name}：${found.length} 条';
+        } catch (_) {
+          failed++;
+          summary = '${source.name}：请求失败或返回格式不兼容';
+        }
+        if (!mounted || generation != _generation) return;
+        setState(() {
+          results = [
+            for (final source in sources) ...?foundBySource[source.name]
+          ];
+          groups = groupCatalog(results, query: searchQuery);
+          sourceResults.add(summary);
+          status =
+              '已搜索 ${sourceResults.length}/${sources.length} 个来源 · ${groups.length} 部影片';
+        });
+      }
+    }
+
+    await Future.wait(
+        List.generate(sources.length.clamp(0, 3), (_) => worker()));
+    if (!mounted || generation != _generation) return;
+    setState(() {
+      searching = false;
+      status = failed > 0
+          ? '找到 ${groups.length} 部影片 · $failed 个来源暂不可用'
+          : '找到 ${groups.length} 部影片';
+    });
+  }
+
+  Future<void> _recordSearchHistory(String value) async {
+    try {
+      await widget.library.recordSearch(value);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: LocalizedText('搜索历史保存失败，请重试；不影响搜索')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const LocalizedText('搜索结果')),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          children: [
+            _SearchInput(
+                controller: query,
+                enabled: widget.library.enabledSources.isNotEmpty,
+                onSearch: _search),
+            const SizedBox(height: 18),
+            LocalizedText(status ?? '正在搜索已启用的源…',
+                style: Theme.of(context).textTheme.bodySmall),
+            if (searching) ...[
+              const SizedBox(height: 8),
+              const LinearProgressIndicator(),
+            ],
+            if (sourceResults.isNotEmpty)
+              ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  title: const LocalizedText('来源状态',
+                      style: TextStyle(fontSize: 12)),
                   children: [
-                    Row(children: [
-                      Expanded(
-                          child: LocalizedText('搜索历史',
-                              style: Theme.of(context).textTheme.titleSmall)),
-                      TextButton.icon(
-                          onPressed: _clearSearchHistory,
-                          icon: const Icon(Icons.delete_outline, size: 18),
-                          label: const LocalizedText('清空')),
-                    ]),
-                    Wrap(spacing: 8, runSpacing: 4, children: [
-                      for (final keyword in history)
-                        InputChip(
-                            label: Text(keyword,
-                                maxLines: 1, overflow: TextOverflow.ellipsis),
-                            onPressed: () {
-                              query.text = keyword;
-                              unawaited(_search());
-                            },
-                            deleteButtonTooltipMessage:
-                                uiText(context, '删除搜索记录：$keyword'),
-                            onDeleted: () => _saveSearchHistory(
-                                () => widget.library.removeSearch(keyword))),
-                    ]),
-                    const SizedBox(height: 12),
-                  ]);
-            }),
-        Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: _direct,
-              icon: const Icon(Icons.play_circle_outline, size: 18),
-              label: const LocalizedText('手动播放直链'),
-            )),
-        LocalizedText(status ?? '输入片名，搜索已启用的内容来源'),
-        if (searching) const LinearProgressIndicator(),
-        if (sourceResults.isNotEmpty)
-          ExpansionTile(
-              title:
-                  const LocalizedText('来源状态', style: TextStyle(fontSize: 12)),
-              children: [
-                for (final result in sourceResults)
-                  ListTile(
-                      dense: true,
-                      title: LocalizedText(result,
-                          style: const TextStyle(fontSize: 12)))
-              ]),
-        SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(children: [
-              for (final label in ['全部', '电影', '电视剧', '动漫', '综艺', '短剧', 'AI漫剧'])
-                Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: ChoiceChip(
-                        label: LocalizedText(label),
-                        selected: filter == label,
-                        onSelected: (_) => setState(() => filter = label)))
-            ])),
-        const SizedBox(height: 6),
-        EntryList(
-          entries: [
-            for (final group in groups)
-              if (filter == '全部' ||
-                  catalogKind(group.primary.category) == filter)
-                group.primary
+                    for (final result in sourceResults)
+                      ListTile(
+                          dense: true,
+                          title: LocalizedText(result,
+                              style: const TextStyle(fontSize: 12)))
+                  ]),
+            const SizedBox(height: 10),
+            SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: [
+                  for (final label in [
+                    '全部',
+                    '电影',
+                    '电视剧',
+                    '动漫',
+                    '综艺',
+                    '短剧',
+                    'AI漫剧'
+                  ])
+                    Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: ChoiceChip(
+                            label: LocalizedText(label),
+                            selected: filter == label,
+                            showCheckmark: false,
+                            selectedColor: const Color(0xffffe3d6),
+                            side: BorderSide.none,
+                            onSelected: (_) => setState(() => filter = label)))
+                ])),
+            const SizedBox(height: 12),
+            EntryList(
+              compact: true,
+              entries: [
+                for (final group in groups)
+                  if (filter == '全部' ||
+                      catalogKind(group.primary.category) == filter)
+                    group.primary
+              ],
+              variants: {
+                for (final group in groups) group.primary.id: group.entries
+              },
+              title: '搜索结果',
+              empty: widget.library.enabledSources.isEmpty
+                  ? '没有启用的源，请在“设置”中启用或添加。'
+                  : (searching ? '正在寻找匹配内容…' : '暂无匹配内容，试试其他片名或分类。'),
+              library: widget.library,
+            ),
           ],
-          variants: {
-            for (final group in groups) group.primary.id: group.entries
-          },
-          title: '搜索结果',
-          empty: widget.library.enabledSources.isEmpty
-              ? '没有启用的源，请在“设置”中启用或添加。'
-              : (searching
-                  ? '正在寻找匹配内容…'
-                  : status == null
-                      ? '输入关键词并点击搜索。'
-                      : '暂无匹配内容，试试其他片名或分类。'),
-          library: widget.library,
         ),
-      ]);
+      );
 }
 
 class EntryList extends StatelessWidget {
@@ -373,11 +496,13 @@ class EntryList extends StatelessWidget {
       required this.library,
       required this.title,
       required this.empty,
+      this.compact = false,
       this.variants = const {}});
   final List<MediaEntry> entries;
   final Library library;
   final String title;
   final String empty;
+  final bool compact;
   final Map<String, List<MediaEntry>> variants;
 
   @override
@@ -387,11 +512,12 @@ class EntryList extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: LocalizedText(title,
-                    style: Theme.of(context).textTheme.titleMedium),
-              ),
+              if (!compact)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: LocalizedText(title,
+                      style: Theme.of(context).textTheme.titleMedium),
+                ),
               if (entries.isEmpty)
                 Padding(
                   padding: const EdgeInsets.all(16),
@@ -402,6 +528,7 @@ class EntryList extends StatelessWidget {
                     padding: const EdgeInsets.only(bottom: 12),
                     child: _CatalogCard(
                       entry: entry,
+                      compact: compact,
                       trailing: IconButton(
                         tooltip: uiText(
                             context, library.isFavorite(entry) ? '取消收藏' : '收藏'),

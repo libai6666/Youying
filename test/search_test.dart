@@ -10,6 +10,7 @@ import 'package:shared_preferences_platform_interface/shared_preferences_async_p
 import 'package:youying/catalog.dart';
 import 'package:youying/library.dart';
 import 'package:youying/main.dart';
+import 'package:youying/ui_locale.dart';
 
 final class _MemoryStorage extends SharedPreferencesAsyncPlatform {
   final values = <String, Object>{};
@@ -45,14 +46,21 @@ void main() {
     final client =
         CatalogClient(client: MockClient((_) async => response('共同电影')));
     addTearDown(client.dispose);
+    final lib = library();
     await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: SearchPage(library: library(), client: client))));
+        home: Scaffold(body: SearchPage(library: lib, client: client))));
+    expect(find.byType(SearchResultsPage), findsNothing);
+    expect(find.byType(EntryList), findsNothing);
     await tester.enterText(find.byType(TextField), '共同电影');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(TextButton, '搜索'));
+    await tester.pump();
     await tester.runAsync(() async {
-      await tester.tap(find.byTooltip('搜索'));
       await Future<void>.delayed(const Duration(milliseconds: 30));
     });
     await tester.pumpAndSettle();
+    expect(find.byType(SearchResultsPage), findsOneWidget);
+    expect(find.text('搜索历史'), findsNothing);
     expect(
         find.descendant(
             of: find.byType(EntryList), matching: find.text('共同电影')),
@@ -70,6 +78,21 @@ void main() {
         find.descendant(
             of: find.byType(EntryList), matching: find.text('共同电影')),
         findsOneWidget);
+    await tester.tap(find.byTooltip('收藏'));
+    await tester.pumpAndSettle();
+    expect(lib.favorites.length, 1);
+    expect(find.byTooltip('取消收藏'), findsOneWidget);
+    await tester.tap(find.byTooltip('取消收藏'));
+    await tester.pumpAndSettle();
+    expect(lib.favorites, isEmpty);
+    await tester.tap(find.descendant(
+        of: find.byType(EntryList), matching: find.text('共同电影')));
+    await tester.pump();
+    final detail =
+        tester.widget<DetailPage>(find.byType(DetailPage, skipOffstage: false));
+    expect(detail.entry.title, '共同电影');
+    expect(detail.variants.length, 2);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('late responses cannot replace a newer query', (tester) async {
@@ -84,11 +107,18 @@ void main() {
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(body: SearchPage(library: lib, client: client))));
     await tester.enterText(find.byType(TextField), 'old');
-    await tester.tap(find.byTooltip('搜索'));
     await tester.pump();
-    await tester.enterText(find.byType(TextField), 'new');
+    await tester.tap(find.widgetWithText(TextButton, '搜索'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.enterText(
+        find.descendant(
+            of: find.byType(SearchResultsPage),
+            matching: find.byType(TextField)),
+        'new');
+    await tester.pump();
     await tester.runAsync(() async {
-      await tester.tap(find.byTooltip('搜索'));
+      await tester.tap(find.widgetWithText(TextButton, '搜索').last);
       await Future<void>.delayed(const Duration(milliseconds: 30));
       old.complete(response('old'));
       await Future<void>.delayed(const Duration(milliseconds: 30));
@@ -111,7 +141,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(body: SearchPage(library: lib, client: client))));
     await tester.enterText(find.byType(TextField), 'old');
-    await tester.tap(find.byTooltip('搜索'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(TextButton, '搜索'));
     await tester.pump();
     lib.sources = [];
     lib.notifyListeners();
@@ -141,7 +172,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(body: SearchPage(library: lib, client: client))));
     await tester.enterText(find.byType(TextField), ' 新片名 ');
-    await tester.tap(find.byTooltip('搜索'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(TextButton, '搜索'));
     await tester.pump();
     await tester.runAsync(() async {
       await Future<void>.delayed(const Duration(milliseconds: 30));
@@ -149,6 +181,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(requested, ['新片名']);
     expect(lib.searchHistory, ['新片名', '旧记录']);
+    expect(find.byType(InputChip), findsNothing);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(SearchResultsPage), findsNothing);
     final oldChip = find.widgetWithText(InputChip, '旧记录');
     await tester.tap(oldChip);
     await tester.pump();
@@ -159,6 +195,8 @@ void main() {
     expect(requested, ['新片名', '旧记录']);
     expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
         '旧记录');
+    await tester.pageBack();
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('删除搜索记录：新片名'));
     await tester.pumpAndSettle();
     expect(lib.searchHistory, ['旧记录']);
@@ -190,6 +228,96 @@ void main() {
             child: child!),
         home: Scaffold(body: SearchPage(library: lib))));
     expect(find.byType(InputChip), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('entry disables empty searches and reacts to source changes',
+      (tester) async {
+    final lib = library()..sources = [];
+    final client = CatalogClient(client: MockClient((_) async {
+      throw StateError('No search should run');
+    }));
+    addTearDown(client.dispose);
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: SearchPage(library: lib, client: client))));
+    TextButton button() =>
+        tester.widget<TextButton>(find.widgetWithText(TextButton, '搜索'));
+    expect(button().onPressed, isNull);
+    await tester.enterText(find.byType(TextField), '关键词');
+    await tester.pump();
+    expect(button().onPressed, isNull);
+    expect(find.text('没有启用的源，请在“设置”中启用或添加。'), findsOneWidget);
+    lib.sources = library().sources;
+    lib.notifyListeners();
+    await tester.pump();
+    expect(button().onPressed, isNotNull);
+    expect(find.text('没有启用的源，请在“设置”中启用或添加。'), findsNothing);
+    await tester.tap(find.byTooltip('清空'));
+    await tester.pump();
+    expect(button().onPressed, isNull);
+    expect(find.byType(SearchResultsPage), findsNothing);
+  });
+
+  testWidgets('returning from pending results ignores late responses',
+      (tester) async {
+    final pending = Completer<http.Response>();
+    final client = CatalogClient(client: MockClient((_) => pending.future));
+    addTearDown(client.dispose);
+    final lib = library()..sources = [library().sources.first];
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: SearchPage(library: lib, client: client))));
+    await tester.enterText(find.byType(TextField), '未完成');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(TextButton, '搜索'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pump();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      pending.complete(response('未完成'));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+    });
+    await tester.pumpAndSettle();
+    expect(find.byType(SearchResultsPage), findsNothing);
+    expect(find.byType(EntryList), findsNothing);
+    expect(lib.searchHistory, ['未完成']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('entry and results follow English locale and large system text',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client =
+        CatalogClient(client: MockClient((_) async => response('现在就出发')));
+    addTearDown(client.dispose);
+    await tester.pumpWidget(MaterialApp(
+        locale: const Locale('en'),
+        supportedLocales: appLocales,
+        localizationsDelegates: appLocalizationsDelegates,
+        builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: TextScaler.linear(2)),
+            child: child!),
+        home: Scaffold(body: SearchPage(library: library(), client: client))));
+    expect(find.text('Search movies, series, anime'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '现在就出发');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(TextButton, 'Search'));
+    await tester.pump();
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+    });
+    await tester.pumpAndSettle();
+    expect(find.byType(SearchResultsPage), findsOneWidget);
+    expect(find.text('Search results'), findsWidgets);
+    expect(
+        find.descendant(
+            of: find.byType(EntryList), matching: find.text('现在就出发')),
+        findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

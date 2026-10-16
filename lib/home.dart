@@ -1090,26 +1090,28 @@ class _CatalogCard extends StatelessWidget {
       required this.onTap,
       this.trailing,
       this.watchInfo,
-      this.artwork});
+      this.artwork,
+      this.compact = false});
   final MediaEntry entry;
   final VoidCallback onTap;
   final Widget? trailing;
   final String? watchInfo;
   final ArtworkResolver? artwork;
+  final bool compact;
   @override
   Widget build(BuildContext context) => Material(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(compact ? 12 : 10),
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(compact ? 12 : 10),
           child: Padding(
-              padding: const EdgeInsets.all(12),
+              padding: EdgeInsets.all(compact ? 10 : 12),
               child:
                   Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 SizedBox(
-                    width: 66,
-                    height: 99,
+                    width: compact ? 60 : 66,
+                    height: compact ? 90 : 99,
                     child: ClipRRect(
                         borderRadius: BorderRadius.circular(5),
                         child: _Poster(entry: entry, artwork: artwork))),
@@ -1119,11 +1121,11 @@ class _CatalogCard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                       Text(entry.title,
-                          maxLines: 1,
+                          maxLines: compact ? 2 : 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                               fontSize: 14, fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 6),
+                      SizedBox(height: compact ? 4 : 6),
                       Text(
                           [entry.source, entry.year, entry.category, entry.area]
                               .where((s) => s.isNotEmpty)
@@ -1131,7 +1133,7 @@ class _CatalogCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 10, color: _muted)),
-                      const SizedBox(height: 6),
+                      SizedBox(height: compact ? 4 : 6),
                       Text(
                           (watchInfo == null
                                   ? null
@@ -1141,34 +1143,36 @@ class _CatalogCard extends StatelessWidget {
                                       ? uiText(context, '暂无简介')
                                       : entry.remarks)
                                   : entry.description),
-                          maxLines: watchInfo == null ? 2 : 3,
+                          maxLines: compact ? 2 : (watchInfo == null ? 2 : 3),
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                               fontSize: 11, height: 1.4, color: _muted)),
-                      const SizedBox(height: 6),
-                      SizedBox(
-                          height:
-                              MediaQuery.textScalerOf(context).scale(10) * 1.5 +
-                                  4,
-                          child: ListView(
-                              scrollDirection: Axis.horizontal,
-                              children: [
-                                for (final actor in entry.actors
-                                    .split(RegExp(r'[,，/、]'))
-                                    .where((s) => s.trim().isNotEmpty)
-                                    .take(5))
-                                  Container(
-                                      margin: const EdgeInsets.only(right: 5),
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 5, vertical: 2),
-                                      decoration: BoxDecoration(
-                                          color: _canvas,
-                                          borderRadius:
-                                              BorderRadius.circular(2)),
-                                      child: Text(actor.trim(),
-                                          style: const TextStyle(
-                                              fontSize: 10, color: _muted))),
-                              ])),
+                      if (!compact) ...[
+                        const SizedBox(height: 6),
+                        SizedBox(
+                            height: MediaQuery.textScalerOf(context).scale(10) *
+                                    1.5 +
+                                4,
+                            child: ListView(
+                                scrollDirection: Axis.horizontal,
+                                children: [
+                                  for (final actor in entry.actors
+                                      .split(RegExp(r'[,，/、]'))
+                                      .where((s) => s.trim().isNotEmpty)
+                                      .take(5))
+                                    Container(
+                                        margin: const EdgeInsets.only(right: 5),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 5, vertical: 2),
+                                        decoration: BoxDecoration(
+                                            color: _canvas,
+                                            borderRadius:
+                                                BorderRadius.circular(2)),
+                                        child: Text(actor.trim(),
+                                            style: const TextStyle(
+                                                fontSize: 10, color: _muted))),
+                                ])),
+                      ],
                     ])),
                 if (trailing != null) trailing!,
               ])),

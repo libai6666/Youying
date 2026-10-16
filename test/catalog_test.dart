@@ -12,6 +12,7 @@ void main() {
           String year = '2025',
           String category = '喜剧片',
           String actors = '蔡卓妍,张继聪,邱士缙',
+          String language = '',
           String director = '罗耀辉'}) =>
       MediaEntry(
           id: id,
@@ -21,11 +22,11 @@ void main() {
           year: year,
           category: category,
           actors: actors,
+          language: language,
           director: director,
           poster: 'https://example.com/same.jpg');
 
-  test(
-      'corroborated language editions and conflicting source years share a card',
+  test('language editions and conflicting source years keep separate cards',
       () {
     final entries = [
       movie('360:国语', title: '祥赌必赢国语', year: '2026'),
@@ -34,12 +35,48 @@ void main() {
       movie('豪华:108569'),
     ];
     final grouped = groupCatalog(entries);
-    expect(grouped, hasLength(1));
-    expect(grouped.single.entries.map((e) => e.id), entries.map((e) => e.id));
-    expect(grouped.single.entries[0].title, '祥赌必赢国语');
-    expect(grouped.single.entries[1].year, '2026');
-    expect(catalogWorkTitle('祥赌必赢（粤语版）'), '祥赌必赢');
-    expect(catalogWorkTitle('A Movie 国语'), 'A Movie');
+    expect(grouped, hasLength(3));
+    expect(grouped[0].primary.title, '祥赌必赢国语');
+    expect(grouped[1].primary.title, '祥赌必赢粤语');
+    expect(grouped[2].entries.map((e) => e.id), ['极速:85011', '豪华:108569']);
+    for (final other in [
+      movie('different-year', year: '2026'),
+      movie('dubbed', title: '祥赌必赢（粤语版）'),
+    ]) {
+      expect(groupCatalog([entries[2], other]), hasLength(2));
+      expect(sameCatalogVersion(entries[2], other), isFalse);
+    }
+  });
+
+  test('language metadata separates versions even with identical titles', () {
+    final mandarin = movie('mandarin', language: '国语');
+    final cantonese = movie('cantonese', language: '粤语');
+    final sameVersion = movie('another-source', language: '国语');
+    final grouped = groupCatalog([mandarin, cantonese, sameVersion]);
+    expect(grouped, hasLength(2));
+    expect(grouped[0].entries.map((e) => e.id), ['mandarin', 'another-source']);
+    expect(grouped[1].entries.single.id, 'cantonese');
+    expect(sameCatalogVersion(mandarin, cantonese), isFalse);
+    expect(sameCatalogVersion(mandarin, sameVersion), isTrue);
+  });
+
+  test('missing language cannot bridge distinct language versions', () {
+    final unknown = movie('unknown');
+    final mandarin = movie('mandarin', language: '国语');
+    final cantonese = movie('cantonese', language: '粤语');
+    for (final entries in [
+      [unknown, mandarin, cantonese],
+      [mandarin, unknown, cantonese],
+      [cantonese, unknown, mandarin],
+    ]) {
+      final grouped = groupCatalog(entries);
+      expect(grouped, hasLength(2));
+      expect(
+          grouped.any((group) =>
+              group.entries.contains(mandarin) &&
+              group.entries.contains(cantonese)),
+          isFalse);
+    }
   });
 
   test('duplicate matching never relies on a shared poster or title alone', () {

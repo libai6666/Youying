@@ -210,7 +210,7 @@ void main() {
     expect(client.requested, containsAll(['A:7:1', 'B:92:1']));
   });
 
-  test('a grouped edition retains every original source version in details',
+  test('different editions keep separate cards and detail source choices',
       () async {
     client.records = (source) => [
           for (final edition in source.name == 'A' ? ['国语', '粤语'] : [''])
@@ -225,9 +225,11 @@ void main() {
         ];
     await directory.refresh();
     final feed = directory.feedFor('电影')!;
-    expect(feed.entries, hasLength(1));
-    expect(directory.variantsFor(feed.entries.single).map((e) => e.id),
-        ['A:国语', 'A:粤语', 'B:']);
+    expect(feed.entries, hasLength(3));
+    expect(feed.entries.map((e) => e.title), ['祥赌必赢国语', '祥赌必赢粤语', '祥赌必赢']);
+    for (final entry in feed.entries) {
+      expect(directory.variantsFor(entry).map((e) => e.id), [entry.id]);
+    }
   });
 
   test(

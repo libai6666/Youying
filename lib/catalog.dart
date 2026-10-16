@@ -403,11 +403,6 @@ class CatalogGroup {
       .withArtworkFrom(entries);
 }
 
-final _dubSuffix = RegExp(r'[（(\[]?(?:国语|粤语|普通话)(?:版)?[）)\]]?$');
-
-String catalogWorkTitle(String title) =>
-    title.trim().replaceFirst(_dubSuffix, '').trim();
-
 Set<String> _catalogCast(String actors) => actors
     .split(RegExp(r'[,，、/|;；]+'))
     .map(catalogTitle)
@@ -419,14 +414,23 @@ String _catalogYear(String year) =>
         ? year.trim().substring(0, 4)
         : '';
 
-bool sameCatalogWork(MediaEntry a, MediaEntry b) {
+bool sameCatalogVersion(MediaEntry a, MediaEntry b) {
   if (a.id == b.id) return true;
-  final title = catalogTitle(catalogWorkTitle(a.title));
+  final title = catalogTitle(a.title);
   final kind = catalogKind(a.category);
   if (title.isEmpty ||
-      title != catalogTitle(catalogWorkTitle(b.title)) ||
+      title != catalogTitle(b.title) ||
       kind.isEmpty ||
       kind != catalogKind(b.category)) {
+    return false;
+  }
+  final year = _catalogYear(a.year);
+  if (year.isEmpty || year != _catalogYear(b.year)) return false;
+  final language = catalogTitle(a.language);
+  final otherLanguage = catalogTitle(b.language);
+  if (language.isNotEmpty &&
+      otherLanguage.isNotEmpty &&
+      language != otherLanguage) {
     return false;
   }
   final director = catalogTitle(a.director);
@@ -442,16 +446,7 @@ bool sameCatalogWork(MediaEntry a, MediaEntry b) {
   if (actors.isNotEmpty && otherActors.isNotEmpty && shared.isEmpty) {
     return false;
   }
-  final year = _catalogYear(a.year);
-  if (catalogTitle(a.title) == catalogTitle(b.title) &&
-      year.isNotEmpty &&
-      year == _catalogYear(b.year)) {
-    return true;
-  }
-  return director.isNotEmpty &&
-      director != '未知' &&
-      director == otherDirector &&
-      shared.length >= 2;
+  return true;
 }
 
 List<CatalogGroup> groupCatalog(Iterable<MediaEntry> entries,
@@ -462,13 +457,13 @@ List<CatalogGroup> groupCatalog(Iterable<MediaEntry> entries,
   for (final entry in entries) {
     if (!seen.add(entry.id)) continue;
     final key = jsonEncode([
-      catalogTitle(catalogWorkTitle(entry.title)),
+      catalogTitle(entry.title),
       catalogKind(entry.category),
     ]);
     final bucket = buckets.putIfAbsent(key, () => []);
     CatalogGroup? match;
     for (final group in bucket) {
-      if (group.entries.every((other) => sameCatalogWork(other, entry))) {
+      if (group.entries.every((other) => sameCatalogVersion(other, entry))) {
         match = group;
         break;
       }

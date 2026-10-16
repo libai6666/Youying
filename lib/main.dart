@@ -502,8 +502,8 @@ class _DetailPageState extends State<DetailPage> {
 
   Future<void> _findSources() async {
     if (findingSources) return;
-    final work = entry;
-    final title = catalogWorkTitle(work.title);
+    final version = entry;
+    final title = version.title;
     setState(() {
       findingSources = true;
       sourceStatus = null;
@@ -516,7 +516,7 @@ class _DetailPageState extends State<DetailPage> {
           final found = await client.search(source, title);
           if (!mounted) return;
           for (final candidate in found) {
-            if (sameCatalogWork(work, candidate) &&
+            if (sameCatalogVersion(version, candidate) &&
                 library.enabledSources.any((s) => s.name == candidate.source)) {
               _choices[candidate.id] = candidate;
             }

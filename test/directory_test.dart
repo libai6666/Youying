@@ -469,4 +469,38 @@ void main() {
     expect(groups.first.entries.map((e) => e.id), ['2', '3']);
     expect(groups.last.primary.title, '某剧 第二季');
   });
+
+  test('AI short dramas join the AI tab and use inferred themes', () {
+    expect(catalogKind('AI短剧'), 'AI漫剧');
+    expect(catalogKind('ai短剧'), 'AI漫剧');
+    expect(catalogKind('漫剧'), 'AI漫剧');
+    expect(catalogKind('爽文短剧'), '短剧');
+    expect(catalogKind('擦边短剧'), '短剧');
+    expect(
+        directoryCategories(const [
+          CatalogCategory('54', 'AI漫剧'),
+          CatalogCategory('55', 'AI短剧'),
+          CatalogCategory('38', '短剧'),
+        ], 'AI漫剧')
+            .map((c) => c.id),
+        ['54', '55']);
+    expect(catalogGenreOptions('AI漫剧'), containsAll(['穿越', '甜宠', '玄幻仙侠']));
+    expect(catalogGenreOptions('AI漫剧'), isNot(contains('冒险')));
+    expect(catalogGenreOptions('动漫'), contains('冒险'));
+
+    const ai = MediaEntry(
+        id: 'ai',
+        title: '和闺蜜穿越落魄王府',
+        source: 'A',
+        category: 'AI漫剧',
+        description: '摄政王每天都想宠溺她');
+    const plain =
+        MediaEntry(id: 'plain', title: '穿越时空', source: 'A', category: '科幻片');
+    expect(aiDramaThemes(ai), containsAll(['古装', '穿越', '甜宠']));
+    expect(aiDramaThemes(ai), isNot(contains('末世')));
+    expect(aiDramaThemes(plain), isEmpty);
+    expect(const CatalogFilters(genre: '穿越').matches(ai), isTrue);
+    expect(const CatalogFilters(genre: '穿越').matches(plain), isFalse);
+    expect(const CatalogFilters(genre: '末世').matches(ai), isFalse);
+  });
 }

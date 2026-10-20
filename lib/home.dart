@@ -392,6 +392,7 @@ class _HomePageState extends State<HomePage> {
     final all = feed.rawEntries;
     final hot = all.any((e) => (e.popularity ?? 0) > 0);
     final rated = all.any((e) => e.rating != null);
+    final ai = directoryLabel(label) == 'AI漫剧';
     void change(CatalogFilters next) =>
         setState(() => _catalogFilters[label] = next);
     List<String> options(Iterable<String> values) =>
@@ -412,7 +413,7 @@ class _HomePageState extends State<HomePage> {
                 CatalogOrder.popular => '最热',
                 CatalogOrder.rating => '好评'
               },
-              ['最新', '最热', '好评'],
+              ['最新', '最热', if (!ai) '好评'],
               (value) => change(filters.copyWith(
                       order: switch (value) {
                     '最热' => CatalogOrder.popular,
@@ -421,7 +422,7 @@ class _HomePageState extends State<HomePage> {
                   })),
               disabled: {if (!hot) '最热', if (!rated) '好评'}),
           _filterRow(
-              '类型',
+              ai ? '题材' : '类型',
               filters.genre,
               options([
                 ...catalogGenreOptions(label),
@@ -447,47 +448,52 @@ class _HomePageState extends State<HomePage> {
                       '香港',
                       '香港剧',
                       '短',
-                      '短剧'
+                      '短剧',
+                      'AI漫剧',
+                      '漫剧',
+                      'AI短剧'
                     ].contains(g))
               ]),
               (value) => change(filters.copyWith(genre: value))),
-          _filterRow(
-              '地区',
-              filters.area,
-              options([
-                '大陆',
-                '香港',
-                '台湾',
-                '美国',
-                '法国',
-                '英国',
-                '日本',
-                '韩国',
-                '德国',
-                '泰国',
+          if (!ai) ...[
+            _filterRow(
+                '地区',
                 filters.area,
-                ...all.expand((e) => catalogTokens(e.area, area: true))
-              ]),
-              (value) => change(filters.copyWith(area: value))),
-          _filterRow(
-              '语言',
-              filters.language,
-              options([
-                '国语',
-                '英语',
-                '粤语',
-                '闽南语',
-                '韩语',
-                '日语',
-                '法语',
-                '德语',
-                '其它',
+                options([
+                  '大陆',
+                  '香港',
+                  '台湾',
+                  '美国',
+                  '法国',
+                  '英国',
+                  '日本',
+                  '韩国',
+                  '德国',
+                  '泰国',
+                  filters.area,
+                  ...all.expand((e) => catalogTokens(e.area, area: true))
+                ]),
+                (value) => change(filters.copyWith(area: value))),
+            _filterRow(
+                '语言',
                 filters.language,
-                ...all.expand((e) => catalogTokens(e.language))
-              ]),
-              (value) => change(filters.copyWith(language: value))),
-          _filterRow('年份', filters.year, options(sortedYears),
-              (value) => change(filters.copyWith(year: value))),
+                options([
+                  '国语',
+                  '英语',
+                  '粤语',
+                  '闽南语',
+                  '韩语',
+                  '日语',
+                  '法语',
+                  '德语',
+                  '其它',
+                  filters.language,
+                  ...all.expand((e) => catalogTokens(e.language))
+                ]),
+                (value) => change(filters.copyWith(language: value))),
+            _filterRow('年份', filters.year, options(sortedYears),
+                (value) => change(filters.copyWith(year: value))),
+          ],
           Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
               child: Column(
@@ -498,11 +504,14 @@ class _HomePageState extends State<HomePage> {
                         style: const TextStyle(fontSize: 11, color: _muted)),
                     const LocalizedText('加载更多可继续筛选；最新按来源更新时间，非小柚子同源片单。',
                         style: TextStyle(fontSize: 10, color: _muted)),
-                    if (!hot || !rated)
+                    if (ai)
+                      const LocalizedText('题材按片名和简介推断，仅供参考',
+                          style: TextStyle(fontSize: 10, color: _muted)),
+                    if (!hot || (!rated && !ai))
                       LocalizedText(
                           '${[
                             if (!hot) '热度',
-                            if (!rated) '评分'
+                            if (!rated && !ai) '评分'
                           ].join('、')}暂无可用数据，对应排序暂不可用',
                           style: const TextStyle(fontSize: 10, color: _muted)),
                     if (filters.order == CatalogOrder.popular)

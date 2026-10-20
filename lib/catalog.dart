@@ -375,7 +375,10 @@ int? catalogDate(Object? value) {
 }
 
 String catalogKind(String category) {
-  if (category.contains('漫剧')) return 'AI漫剧';
+  if (category.contains('漫剧') ||
+      (category.toUpperCase().contains('AI') && category.contains('短剧'))) {
+    return 'AI漫剧';
+  }
   if (category.contains('短剧')) return '短剧';
   if (category.contains('综艺')) return '综艺';
   if (category == '动画片' || category.endsWith('片') || category == '电影') {

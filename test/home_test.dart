@@ -123,6 +123,42 @@ class FacetCatalog extends PreviewCatalog {
   }
 }
 
+class AiDramaCatalog extends PreviewCatalog {
+  @override
+  Future<List<CatalogCategory>> categories(SourceEndpoint source) async => [
+        ...await super.categories(source),
+        const CatalogCategory('54', 'AI漫剧'),
+      ];
+
+  @override
+  Future<CatalogListing> browse(SourceEndpoint source,
+      {String? categoryId, int page = 1}) async {
+    if (categoryId != '54') {
+      return super.browse(source, categoryId: categoryId, page: page);
+    }
+    return CatalogListing(const [
+      MediaEntry(
+          id: 'ai-travel',
+          title: '和闺蜜穿越落魄王府',
+          source: '测试源',
+          category: 'AI漫剧',
+          area: '中国大陆',
+          language: '普通话',
+          year: '2026',
+          updatedAtMs: 200),
+      MediaEntry(
+          id: 'ai-doom',
+          title: '天灾降临囤物资',
+          source: '测试源',
+          category: 'AI漫剧',
+          area: '中国大陆',
+          language: '普通话',
+          year: '2026',
+          updatedAtMs: 100),
+    ], page: page, pageCount: 1);
+  }
+}
+
 class PartialFailureCatalog extends PreviewCatalog {
   bool failCategories = false;
   bool failBrowse = false;
@@ -625,6 +661,31 @@ void main() {
     expect(find.text('喜剧电影乙'), findsOneWidget);
     expect(find.text('动作电影甲'), findsNothing);
     expect(find.text('动作电影丙'), findsNothing);
+  });
+
+  testWidgets('AI tab filters by inferred theme without region facets',
+      (tester) async {
+    await mount(tester,
+        catalog: AiDramaCatalog(), library: previewLibrary()..history.clear());
+    await tester.ensureVisible(find.text('AI漫剧'));
+    await tester.tap(find.text('AI漫剧'));
+    await tester.pumpAndSettle();
+    expect(find.text('题材'), findsOneWidget);
+    expect(find.text('题材按片名和简介推断，仅供参考'), findsOneWidget);
+    for (final facet in ['地区', '语言', '年份', '类型']) {
+      expect(find.text(facet), findsNothing);
+    }
+    expect(find.byKey(const ValueKey('filter-AI漫剧-排序-好评')), findsNothing);
+    expect(find.byKey(const ValueKey('filter-AI漫剧-题材-冒险')), findsNothing);
+    expect(find.text('和闺蜜穿越落魄王府'), findsOneWidget);
+    expect(find.text('天灾降临囤物资'), findsOneWidget);
+    final chip = find.byKey(const ValueKey('filter-AI漫剧-题材-末世'));
+    await tester.ensureVisible(chip);
+    await tester.tap(chip);
+    await tester.pumpAndSettle();
+    expect(find.text('天灾降临囤物资'), findsOneWidget);
+    expect(find.text('和闺蜜穿越落魄王府'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   for (final width in [320.0, 1280.0]) {

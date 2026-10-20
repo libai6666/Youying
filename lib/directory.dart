@@ -34,7 +34,9 @@ class CatalogFilters {
           order: order ?? this.order);
 
   bool matches(MediaEntry entry) =>
-      (genre.isEmpty || catalogGenres(entry).contains(genre)) &&
+      (genre.isEmpty ||
+          catalogGenres(entry).contains(genre) ||
+          aiDramaThemes(entry).contains(genre)) &&
       (area.isEmpty || catalogTokens(entry.area, area: true).contains(area)) &&
       (language.isEmpty || catalogTokens(entry.language).contains(language)) &&
       (year.isEmpty || catalogYear(entry.year) == year);
@@ -95,6 +97,33 @@ List<String> catalogGenres(MediaEntry entry) =>
         .map((s) => s.replaceFirst(RegExp(r'片$'), ''))
         .toList();
 
+// Sources rarely tag AI dramas, so themes are inferred from title and blurb.
+final _aiDramaThemePatterns = {
+  '古装': RegExp(r'古装|王爷|太子|皇帝|皇后|公主|王府|摄政王|皇宫|后宫|朕|侯府|嫡女|庶女'),
+  '穿越': RegExp(r'穿越|穿书|穿成|魂穿'),
+  '重生': RegExp(r'重生|重回'),
+  '甜宠': RegExp(r'甜宠|宠妻|宠溺|娇妻|追妻|先婚后爱|闪婚'),
+  '逆袭': RegExp(r'逆袭|打脸|翻身|后悔|废柴'),
+  '玄幻仙侠': RegExp(r'修仙|修真|仙尊|仙帝|仙界|魔尊|魔王|妖女|宗门|玄幻|仙侠|渡劫|灵根'),
+  '都市': RegExp(r'都市|总裁|豪门|职场|首富|千金|霸总'),
+  '末世': RegExp(r'末世|天灾|丧尸|囤货|囤物资|废土'),
+  '系统': RegExp(r'系统|签到|觉醒|异能|金手指'),
+  '萌宝': RegExp(r'萌宝|萌崽|奶团|带娃|崽崽'),
+  '悬疑': RegExp(r'悬疑|诡异|探案|推理|凶案|地府'),
+  '科幻': RegExp(r'星际|科幻|机甲|赛博'),
+};
+
+List<String> get aiDramaThemeOptions => _aiDramaThemePatterns.keys.toList();
+
+List<String> aiDramaThemes(MediaEntry entry) {
+  if (catalogKind(entry.category) != 'AI漫剧') return const [];
+  final text = '${entry.title} ${entry.description}';
+  return [
+    for (final theme in _aiDramaThemePatterns.entries)
+      if (theme.value.hasMatch(text)) theme.key
+  ];
+}
+
 List<String> catalogGenreOptions(String label) =>
     switch (directoryLabel(label)) {
       '电影' => [
@@ -122,7 +151,8 @@ List<String> catalogGenreOptions(String label) =>
           '犯罪',
           '武侠'
         ],
-      '动漫' || 'AI漫剧' => ['玄幻', '奇幻', '冒险', '动作', '搞笑', '恋爱', '校园', '热血', '动画'],
+      '动漫' => ['玄幻', '奇幻', '冒险', '动作', '搞笑', '恋爱', '校园', '热血', '动画'],
+      'AI漫剧' => aiDramaThemeOptions,
       '综艺' => ['真人秀', '音乐', '脱口秀', '喜剧', '舞蹈', '访谈', '生活'],
       _ => [],
     };
@@ -176,7 +206,8 @@ List<CatalogCategory> directoryCategories(
       c.name == label ||
       (label == '电视剧' && c.name == '连续剧') ||
       (label == '短剧' && c.name == '爽文短剧') ||
-      (label == '动漫' && c.name == '动画'));
+      (label == '动漫' && c.name == '动画') ||
+      (label == 'AI漫剧' && c.name.toUpperCase() == 'AI短剧'));
   final included = <String, CatalogCategory>{};
   void include(CatalogCategory category) {
     if (included.containsKey(category.id)) return;

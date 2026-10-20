@@ -19,9 +19,49 @@ class CatalogClient {
   CatalogClient({http.Client? client}) : _client = client ?? http.Client();
   final http.Client _client;
 
+  final _localIndexes = <String, (DateTime, Future<List<MediaEntry>>)>{};
+
   Future<List<MediaEntry>> search(SourceEndpoint source, String query) async {
     if (!source.enabled || query.trim().isEmpty) return [];
+    final categories = presetFor(source)?.localSearchCategories ?? const [];
+    if (categories.isNotEmpty) {
+      final needle = _searchKey(query);
+      return [
+        for (final entry in await _localIndex(source, categories))
+          if (_searchKey(entry.title).contains(needle)) entry
+      ];
+    }
     return _request(source, {'ac': 'videolist', 'wd': query.trim()});
+  }
+
+  static String _searchKey(String text) =>
+      text.toLowerCase().replaceAll(RegExp(r'[\s·・:：,，.。!！?？]'), '');
+
+  Future<List<MediaEntry>> _localIndex(
+      SourceEndpoint source, List<String> categories) {
+    final cached = _localIndexes[source.url];
+    if (cached != null &&
+        DateTime.now().difference(cached.$1) < const Duration(minutes: 30)) {
+      return cached.$2;
+    }
+    final index = () async {
+      final entries = <MediaEntry>[];
+      for (final category in categories) {
+        for (var page = 1; page <= 50; page++) {
+          final listing =
+              await browse(source, categoryId: category, page: page);
+          entries.addAll(listing.entries);
+          if (!listing.hasMore) break;
+        }
+      }
+      return entries;
+    }();
+    _localIndexes[source.url] = (DateTime.now(), index);
+    index.catchError((Object _) {
+      _localIndexes.remove(source.url);
+      return const <MediaEntry>[];
+    });
+    return index;
   }
 
   Future<MediaEntry> detail(SourceEndpoint source, MediaEntry entry) async {
@@ -236,6 +276,23 @@ class Library extends ChangeNotifier {
       await _preferences.setString('sources',
           jsonEncode(merged.map((source) => source.toJson()).toList()));
       await _preferences.setBool('public_sources_initialized_v3', true);
+      sources = merged;
+    }
+    if (validSources &&
+        await _preferences.getBool('public_sources_initialized_v4') != true) {
+      final merged = List<SourceEndpoint>.of(sources);
+      for (final preset in sources.isEmpty
+          ? <SourcePreset>[]
+          : sourcePresets.where((p) => p.introducedIn == 4)) {
+        if (!merged.any((source) =>
+            source.name == preset.source.name ||
+            source.url == preset.source.url)) {
+          merged.add(preset.source);
+        }
+      }
+      await _preferences.setString('sources',
+          jsonEncode(merged.map((source) => source.toJson()).toList()));
+      await _preferences.setBool('public_sources_initialized_v4', true);
       sources = merged;
     }
     for (final (text, output) in [

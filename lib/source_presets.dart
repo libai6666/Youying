@@ -12,10 +12,14 @@ const retiredSourcePresetUrls = {
 };
 
 class SourcePreset {
-  const SourcePreset(this.source, this.observation, {this.introducedIn = 1});
+  const SourcePreset(this.source, this.observation,
+      {this.introducedIn = 1, this.localSearchCategories = const []});
   final SourceEndpoint source;
   final String observation;
   final int introducedIn;
+
+  /// Category IDs indexed in-app when the source rejects keyword search.
+  final List<String> localSearchCategories;
 }
 
 const sourcePresets = [
@@ -65,6 +69,13 @@ const sourcePresets = [
         name: '魔都资源', url: 'https://www.mdzyapi.com/api.php/provide/vod'),
     '见 MoonTV 与 vodtv/api 公共配置；目录/片单/搜索/详情/图片及 HLS 清单抽样通过；播放未验收',
     introducedIn: 3,
+  ),
+  SourcePreset(
+    SourceEndpoint(
+        name: '无水印资源', url: 'https://api.wsyzy.net/api.php/provide/vod'),
+    '漫剧分类 339 部，本机抽样 12 部 HTTPS 清单/分片/海报通过、无加密；服务端不支持关键词搜索，App 内按片名检索漫剧',
+    introducedIn: 4,
+    localSearchCategories: ['76'],
   ),
 ];
 

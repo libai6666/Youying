@@ -207,7 +207,7 @@ List<CatalogCategory> directoryCategories(
       (label == '电视剧' && c.name == '连续剧') ||
       (label == '短剧' && c.name == '爽文短剧') ||
       (label == '动漫' && c.name == '动画') ||
-      (label == 'AI漫剧' && c.name.toUpperCase() == 'AI短剧'));
+      (label == 'AI漫剧' && (c.name == '漫剧' || c.name.toUpperCase() == 'AI短剧')));
   final included = <String, CatalogCategory>{};
   void include(CatalogCategory category) {
     if (included.containsKey(category.id)) return;

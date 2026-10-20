@@ -135,20 +135,54 @@ void main() {
     }
   });
 
-  test('first load seeds eight checked presets and no retired endpoints',
+  test('local search indexes 漫剧 pages when the source rejects keywords',
+      () async {
+    final source = sourcePresets
+        .firstWhere((p) => p.localSearchCategories.isNotEmpty)
+        .source;
+    final requested = <String>[];
+    final client = CatalogClient(client: MockClient((request) async {
+      final q = request.url.queryParameters;
+      requested.add('${q['t']}:${q['pg']}:${q['wd']}');
+      if (q.containsKey('wd')) return http.Response('暂不支持搜索', 200);
+      final page = int.parse(q['pg']!);
+      return http.Response(
+          jsonEncode({
+            'page': page,
+            'pagecount': 2,
+            'list': [
+              {
+                'vod_id': page,
+                'vod_name': page == 1 ? '万妖图录 第八季' : '灵魂当铺',
+                'type_name': '漫剧'
+              }
+            ]
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'});
+    }));
+    addTearDown(client.dispose);
+    expect((await client.search(source, '万妖 图录')).map((e) => e.title),
+        ['万妖图录 第八季']);
+    expect((await client.search(source, '当铺')).map((e) => e.title), ['灵魂当铺']);
+    expect(requested, ['76:1:null', '76:2:null']);
+  });
+
+  test('first load seeds nine checked presets and no retired endpoints',
       () async {
     final library = await Library.open();
-    expect(sourcePresets, hasLength(8));
+    expect(sourcePresets, hasLength(9));
     expect(sourcePresets.where((p) => p.introducedIn == 2), hasLength(5));
     expect(library.sources.length, sourcePresets.length);
     expect(library.enabledSources, library.sources);
-    expect(library.sources.map((s) => s.url).toSet(), hasLength(8));
-    expect(library.sources.map((s) => s.name).toSet(), hasLength(8));
+    expect(library.sources.map((s) => s.url).toSet(), hasLength(9));
+    expect(library.sources.map((s) => s.name).toSet(), hasLength(9));
     expect(library.sources.any((s) => retiredSourcePresetUrls.contains(s.url)),
         false);
     expect(store.values['public_sources_initialized_v1'], true);
     expect(store.values['public_sources_initialized_v2'], true);
     expect(store.values['public_sources_initialized_v3'], true);
+    expect(store.values['public_sources_initialized_v4'], true);
     expect((await Library.open()).sources.length, sourcePresets.length);
     for (final preset in sourcePresets) {
       expect(SourceEndpoint.parseHttps(preset.source.url).scheme, 'https');
@@ -240,7 +274,7 @@ void main() {
     store.values['positions'] = '{"saved":1234}';
     store.values['downloads'] = '{"saved":"/local/video.mp4"}';
     var library = await Library.open();
-    expect(library.sources, hasLength(8));
+    expect(library.sources, hasLength(9));
     expect(library.sources.first.enabled, false);
     expect(library.sources.any((s) => s.name == '极速资源'), false);
     expect(library.sources.any((s) => retiredSourcePresetUrls.contains(s.url)),
@@ -253,7 +287,7 @@ void main() {
     expect(library.downloads['saved'], '/local/video.mp4');
     await library.removeSource(library.sources.last);
     library = await Library.open();
-    expect(library.sources, hasLength(7));
+    expect(library.sources, hasLength(8));
   });
 
   test('v1 empty configuration receives later presets once', () async {
@@ -288,11 +322,11 @@ void main() {
       },
     ]);
     final library = await Library.open();
-    expect(library.sources, hasLength(6));
+    expect(library.sources, hasLength(7));
     expect(library.sources.first.url, 'https://custom.example/api');
     expect(library.sources[1].name, 'custom alias');
     expect(library.sources.take(2).every((s) => !s.enabled), true);
-    expect((await Library.open()).sources, hasLength(6));
+    expect((await Library.open()).sources, hasLength(7));
   });
 
   test('v1 upgrade does not overwrite corrupt state or mark migration complete',
@@ -319,7 +353,7 @@ void main() {
     expect(store.values['sources'], previous);
     expect(store.values.containsKey('public_sources_initialized_v2'), false);
     store.failWrites = false;
-    expect((await Library.open()).sources, hasLength(6));
+    expect((await Library.open()).sources, hasLength(7));
   });
 
   test('v3 migration respects a deliberately empty v2 source list', () async {
@@ -340,12 +374,12 @@ void main() {
       {'name': 'custom', 'url': 'https://custom.example/api', 'enabled': false},
     ]);
     final library = await Library.open();
-    expect(library.sources, hasLength(3));
+    expect(library.sources, hasLength(4));
     expect(library.sources.take(2).every((source) => !source.enabled), true);
-    expect(library.sources.last.name, '魔都资源');
+    expect(library.sources.last.name, '无水印资源');
     expect(library.sources.any((source) => source.name == '极速资源'), false);
     await library.removeSource(library.sources.last);
-    expect((await Library.open()).sources, hasLength(2));
+    expect((await Library.open()).sources, hasLength(3));
   });
 
   test('failed persistence does not change the source list', () async {

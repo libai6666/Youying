@@ -503,4 +503,14 @@ void main() {
     expect(const CatalogFilters(genre: '穿越').matches(plain), isFalse);
     expect(const CatalogFilters(genre: '末世').matches(ai), isFalse);
   });
+
+  test('漫剧 roots join the AI tab while 擦边短剧 stays out of 短剧', () {
+    const categories = [
+      CatalogCategory('54', '爽文短剧'),
+      CatalogCategory('73', '擦边短剧'),
+      CatalogCategory('76', '漫剧'),
+    ];
+    expect(directoryCategories(categories, 'AI漫剧').map((c) => c.id), ['76']);
+    expect(directoryCategories(categories, '热门短剧').map((c) => c.id), ['54']);
+  });
 }

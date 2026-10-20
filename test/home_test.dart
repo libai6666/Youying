@@ -544,10 +544,16 @@ void main() {
       await tester.drag(list, const Offset(0, -2000));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      expect(find.text('部分来源加载失败'), findsOneWidget);
-      await tester.tap(find.text('部分来源加载失败'));
-      await tester.pumpAndSettle();
-      expect(find.text('重试未完成来源').hitTestable(), findsOneWidget);
+      // Scrolling to the end retries the failed source automatically.
+      final issues = find.text('部分来源加载失败');
+      if (issues.evaluate().isEmpty) {
+        expect(find.text('本批内容加载失败，请重试'), findsOneWidget);
+        expect(find.text('重试'), findsOneWidget);
+      } else {
+        await tester.tap(issues);
+        await tester.pumpAndSettle();
+        expect(find.text('重试未完成来源').hitTestable(), findsOneWidget);
+      }
       final listContext = tester.element(list);
       expect(PageStorage.of(listContext).readState(listContext), isA<double>());
     });
@@ -649,8 +655,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('filter-电影-类型-动作')));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('加载更多'));
-    await tester.tap(find.text('加载更多'));
+    expect(find.text('上滑加载更多'), findsOneWidget);
+    expect(find.text('加载更多'), findsNothing);
+    await tester.drag(
+        find.byKey(const PageStorageKey('home-电影')), const Offset(0, -600));
     await tester.pumpAndSettle();
     expect(find.text('动作电影甲'), findsOneWidget);
     expect(find.text('动作电影丙'), findsOneWidget);
@@ -713,10 +721,11 @@ void main() {
     await tester.drag(
         find.byKey(const PageStorageKey('ranking-电影')), const Offset(0, -1000));
     await tester.pumpAndSettle();
-    expect(find.text('加载更多').hitTestable(), findsOneWidget);
-    await tester.tap(find.text('加载更多'));
+    await tester.drag(
+        find.byKey(const PageStorageKey('ranking-电影')), const Offset(0, -1000));
     await tester.pumpAndSettle();
     expect(client.requested, contains('1:2'));
+    expect(client.requested.where((r) => r == '1:2'), hasLength(1));
     expect(tester.takeException(), isNull);
   });
 

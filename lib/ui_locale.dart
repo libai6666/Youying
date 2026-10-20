@@ -66,9 +66,11 @@ const _english = <String, String>{
   '部分来源加载失败': 'Some sources failed to load',
   '重试未完成来源': 'Retry failed sources',
   '加载更多': 'Load more',
+  '上滑加载更多': 'Scroll up to load more',
+  '没有更多了': 'No more items',
   '暂未取得内容，可在更多中继续加载': 'Nothing yet. Load more to continue.',
   '暂未取得内容，可继续加载其他子分类': 'No results yet. Load another category.',
-  '当前已加载内容没有匹配项，可调整筛选或加载更多':
+  '当前已加载内容没有匹配项，可调整筛选或继续上滑加载':
       'No matches in loaded results. Adjust filters or load more.',
   '该分类暂无内容': 'Nothing in this category',
   '当前为点播源，未接入电视直播': 'Live TV is not available from on-demand sources',
@@ -96,7 +98,7 @@ const _english = <String, String>{
   '重置筛选': 'Reset filters',
   '没有启用的内容源': 'No sources enabled',
   '前往设置': 'Open settings',
-  '加载更多可继续筛选；最新按来源更新时间，非小柚子同源片单。':
+  '继续上滑会加载更多内容；最新按来源更新时间，非小柚子同源片单。':
       'Load more to filter more titles. Latest is based on source updates.',
   '按来源点击量排序，不是平台热度榜': 'Ordered by source views, not platform popularity',
   '本地观影': 'Your library',

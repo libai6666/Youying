@@ -183,20 +183,22 @@ class _HomePageState extends State<HomePage> {
             child: Stack(children: [
           RefreshIndicator(
               onRefresh: browse.refresh,
-              child: ListView(
-                key: PageStorageKey('home-$category'),
-                padding: const EdgeInsets.only(bottom: 65),
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  _sourcePicker(),
-                  if (!browse.hasSources)
-                    _emptySources()
-                  else if (category == '首页')
-                    ..._homeSections()
-                  else
-                    _categoryContent(category),
-                ],
-              )),
+              child: NotificationListener<ScrollNotification>(
+                  onNotification: (n) => _loadNearEnd(n, category),
+                  child: ListView(
+                    key: PageStorageKey('home-$category'),
+                    padding: const EdgeInsets.only(bottom: 65),
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      _sourcePicker(),
+                      if (!browse.hasSources)
+                        _emptySources()
+                      else if (category == '首页')
+                        ..._homeSections()
+                      else
+                        _categoryContent(category),
+                    ],
+                  ))),
           if (!hideContinue && widget.library.history.isNotEmpty)
             Positioned(
                 left: 12, right: 12, bottom: 6, child: _continueWatching()),
@@ -264,6 +266,25 @@ class _HomePageState extends State<HomePage> {
     ]);
   }
 
+  bool _loadNearEnd(ScrollNotification notification, String label) {
+    final metrics = notification.metrics;
+    final feed = browse.feedFor(label);
+    if (notification.depth == 0 &&
+        metrics.axis == Axis.vertical &&
+        metrics.extentAfter < 600 &&
+        (notification is ScrollUpdateNotification ||
+            notification is OverscrollNotification) &&
+        label != '首页' &&
+        feed != null &&
+        feed.loaded &&
+        !feed.loading &&
+        feed.error == null &&
+        feed.hasMore) {
+      browse.loadLabel(label, more: true);
+    }
+    return false;
+  }
+
   Widget _categoryContent(String label, {bool ranked = false}) {
     final feed = browse.feedFor(label);
     if (browse.loadingCategories && feed?.loaded != true) {
@@ -321,7 +342,7 @@ class _HomePageState extends State<HomePage> {
       if (!feed.loading && feed.error == null && entries.isEmpty)
         _Feedback(
             message: !ranked && feed.entries.isNotEmpty
-                ? '当前已加载内容没有匹配项，可调整筛选或加载更多'
+                ? '当前已加载内容没有匹配项，可调整筛选或继续上滑加载'
                 : feed.hasMore
                     ? '暂未取得内容，可继续加载其他子分类'
                     : '该分类暂无内容'),
@@ -336,10 +357,12 @@ class _HomePageState extends State<HomePage> {
                   onPressed: () => browse.loadLabel(label, retry: true),
                   child: const LocalizedText('重试未完成来源'))
             ]),
-      if (!feed.loading && feed.error == null && feed.hasMore)
-        TextButton(
-            onPressed: () => browse.loadLabel(label, more: true),
-            child: const LocalizedText('加载更多')),
+      if (!feed.loading && feed.error == null && entries.isNotEmpty)
+        Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Center(
+                child: LocalizedText(feed.hasMore ? '上滑加载更多' : '没有更多了',
+                    style: const TextStyle(fontSize: 12, color: _muted)))),
     ]);
   }
 
@@ -502,7 +525,7 @@ class _HomePageState extends State<HomePage> {
                     LocalizedText(
                         '筛选当前已加载 ${feed.entries.length} 部 · 匹配 $count 部',
                         style: const TextStyle(fontSize: 11, color: _muted)),
-                    const LocalizedText('加载更多可继续筛选；最新按来源更新时间，非小柚子同源片单。',
+                    const LocalizedText('继续上滑会加载更多内容；最新按来源更新时间，非小柚子同源片单。',
                         style: TextStyle(fontSize: 10, color: _muted)),
                     if (ai)
                       const LocalizedText('题材按片名和简介推断，仅供参考',
@@ -536,16 +559,18 @@ class _HomePageState extends State<HomePage> {
                   await browse.refresh();
                   await browse.ensureLabel(ranking);
                 },
-                child: ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  key: PageStorageKey('ranking-$ranking'),
-                  padding: const EdgeInsets.only(top: 8, bottom: 20),
-                  children: [
-                    !browse.hasSources
-                        ? _emptySources()
-                        : _categoryContent(ranking, ranked: true)
-                  ],
-                ))),
+                child: NotificationListener<ScrollNotification>(
+                    onNotification: (n) => _loadNearEnd(n, ranking),
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      key: PageStorageKey('ranking-$ranking'),
+                      padding: const EdgeInsets.only(top: 8, bottom: 20),
+                      children: [
+                        !browse.hasSources
+                            ? _emptySources()
+                            : _categoryContent(ranking, ranked: true)
+                      ],
+                    )))),
       ]);
 
   Widget _tabs(List<String> labels, String current, ValueChanged<String> onTap,

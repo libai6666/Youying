@@ -8,7 +8,7 @@
 # 或者只将构建号加 1
 .\dev.cmd -Action version -BumpBuild
 
-# 或者同时指定两者，构建号必须大于当前值
+# 或者同时指定两者（构建号允许相同或回退，但会影响覆盖升级）
 .\dev.cmd -Action version -Version 0.2.1 -BuildNumber 10
 
 # debug调试mumu模拟器
@@ -61,8 +61,11 @@ if (-not ($hasVersion -or $hasBuild -or $BumpBuild)) {
 $nextName = if ($hasVersion) { $Version.Trim() } else { $currentName }
 if ($nextName -notmatch ('\A' + $namePattern + '\z')) { throw 'Version name must use X.Y.Z with no leading zeros, for example 0.2.0.' }
 $nextBuild = if ($hasBuild) { $BuildNumber } else { $currentBuild + 1 }
-if ($nextBuild -le $currentBuild -or $nextBuild -gt 2100000000) {
-    throw 'New Android build number must exceed the current value and be at most 2100000000. Never reset it for a new version name.'
+if ($nextBuild -gt 2100000000) {
+    throw 'New Android build number must be at most 2100000000.'
+}
+if ($nextBuild -le $currentBuild) {
+    Write-Warning "Build number $nextBuild does not exceed the current $currentBuild. Android treats it as not newer, so it cannot install over devices already on $currentBuild or above."
 }
 $nextValue = "$nextName+$nextBuild"
 $replacement = $value.Groups['prefix'].Value + $value.Groups['quote'].Value + $nextValue + $value.Groups['quote'].Value + $value.Groups['suffix'].Value

@@ -118,7 +118,7 @@ GitHub 的运行序号只区分运行记录/制品名称，不参与版本计算
 .\dev.cmd -Action version -ShowVersion                 # 查看，不修改
 .\dev.cmd -Action version -Version 0.2.0               # 设置显示版本名，构建号加 1
 .\dev.cmd -Action version -BumpBuild                   # 保留显示版本名，构建号加 1
-.\dev.cmd -Action version -Version 0.2.1 -BuildNumber 10 # 指定两者，构建号必须大于当前值
+.\dev.cmd -Action version -Version 0.2.1 -BuildNumber 10 # 指定两者，构建号允许相同或回退
 ```
 
 这些命令只修改版本字段，不运行 Flutter 构建、不签名、不提交或推送。
@@ -134,10 +134,12 @@ git commit -m "Bump app version"
 git push
 ```
 
-每次发布升级包都由你手动提高 **Android 构建号 N**，范围为 1 到 2100000000；
-只增显示版本名但复用旧构建号不适合作为新升级包。忘记改版本时，push 仍会打包，但版本不会变化。
+每次发布升级包都由你手动设置 **Android 构建号 N**，范围为 1 到 2100000000；
+脚本允许相同或回退并只给出警告，但低于设备已安装构建号的 APK 无法覆盖安装，
+正常发版仍应保持递增。只增显示版本名但复用旧构建号不适合作为新升级包。
+忘记改版本时，push 仍会打包，但版本不会变化。
 如果曾分发过旧自动递增逻辑生成的包，请查看其 `BUILD-INFO.txt` 或已安装版本，
-下一次手动指定的构建号必须大于那个包，不能只依据本地旧版本号加 1。
+下一次手动指定的构建号应大于那个包，不能只依据本地旧版本号加 1。
 沿用同一签名、相同 application ID，并保证构建号递增才能正常覆盖升级。
 正式包与调试包 application ID 不同，可以并存；构建成功不代表已完成真机播放和下载验收。
 

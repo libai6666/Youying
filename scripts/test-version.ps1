@@ -59,7 +59,8 @@ try {
     Test-Version 'show is read only' @{ShowVersion=$true} $simple $simple
     Test-Version 'repeated show keeps exact manual version' @{ShowVersion=$true} $simple $simple
     Test-Version 'manual explicit name and build' @{Version='0.3.0';BuildNumber=20} $simple ($simple.Replace('0.1.0+1','0.3.0+20'))
-    Test-Version 'manual downgrade rejected' @{BuildNumber=1} $simple $simple $true
+    Test-Version 'manual same build allowed' @{BuildNumber=1} $simple $simple
+    Test-Version 'manual downgrade allowed' @{BuildNumber=2} "name: fixture`nversion: 0.1.0+5`n" "name: fixture`nversion: 0.1.0+2`n"
     Test-Version 'noninteractive missing change rejected' @{} $simple $simple $true
     Write-Host "VERSION_TESTS_PASSED $script:count cases"
 }

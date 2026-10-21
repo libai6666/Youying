@@ -64,8 +64,10 @@ $nextBuild = if ($hasBuild) { $BuildNumber } else { $currentBuild + 1 }
 if ($nextBuild -gt 2100000000) {
     throw 'New Android build number must be at most 2100000000.'
 }
-if ($nextBuild -le $currentBuild) {
-    Write-Warning "Build number $nextBuild does not exceed the current $currentBuild. Android treats it as not newer, so it cannot install over devices already on $currentBuild or above."
+if ($nextBuild -lt $currentBuild) {
+    Write-Warning "Build number $nextBuild is lower than the current $currentBuild. Android rejects installing it on devices already on $currentBuild or above; they would have to uninstall first and lose app data."
+} elseif ($nextBuild -eq $currentBuild) {
+    Write-Warning "Build number $nextBuild equals the current $currentBuild. Devices treat it as the same version: it can reinstall but is not delivered as an update."
 }
 $nextValue = "$nextName+$nextBuild"
 $replacement = $value.Groups['prefix'].Value + $value.Groups['quote'].Value + $nextValue + $value.Groups['quote'].Value + $value.Groups['suffix'].Value

@@ -1,7 +1,7 @@
 name: youying
 description: Youying, an independent Flutter media client with user-configured HTTPS sources.
 publish_to: none
-version: 0.2.0+2
+version: 1.0.0+3
 
 environment:
   sdk: '>=3.6.0 <4.0.0'

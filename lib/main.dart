@@ -265,14 +265,43 @@ class _SearchInputState extends State<_SearchInput> {
   void initState() {
     super.initState();
     // TVs get an initial D-pad focus on the field; phones must not, or
-    // the soft keyboard would pop up uninvited.
+    // the soft keyboard would pop up uninvited. Non-TV devices with a
+    // directional input (emulator keyboards, remotes, TV boxes without
+    // the leanback flag) get it on the first D-pad press instead.
     unawaited(MediaController.isTelevision.then((tv) {
       if (tv && mounted) _node.requestFocus();
     }));
+    HardwareKeyboard.instance.addHandler(_hardwareKey);
+  }
+
+  static final Set<LogicalKeyboardKey> _directionalKeys = {
+    LogicalKeyboardKey.arrowUp,
+    LogicalKeyboardKey.arrowDown,
+    LogicalKeyboardKey.arrowLeft,
+    LogicalKeyboardKey.arrowRight,
+    LogicalKeyboardKey.select,
+    LogicalKeyboardKey.enter,
+    LogicalKeyboardKey.numpadEnter,
+  };
+
+  bool _hardwareKey(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    if (!_directionalKeys.contains(event.logicalKey) ||
+        FocusScope.of(context).focusedChild != null) {
+      return false;
+    }
+    // Let the current key finish its dispatch first, then pull focus.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && FocusScope.of(context).focusedChild == null) {
+        _node.requestFocus();
+      }
+    });
+    return false;
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_hardwareKey);
     if (widget.focusNode == null) _node.dispose();
     super.dispose();
   }

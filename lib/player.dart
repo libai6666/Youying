@@ -262,7 +262,12 @@ class _PlayerPageState extends State<PlayerPage> {
   /// and hand focus to the play button for arrow navigation.
   void _wakeControls() {
     _showControls();
-    if (_fullscreen) _playFocus.requestFocus();
+    if (_fullscreen) {
+      // The overlay buttons only exist after this frame builds.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _controlsVisible) _playFocus.requestFocus();
+      });
+    }
   }
 
   void _hideControls() {
@@ -433,7 +438,9 @@ class _PlayerPageState extends State<PlayerPage> {
       _liveFailStreak = 0;
       if (!playing && _holdActive) _holdEnd(commit: false);
       if (!playing && !selecting) unawaited(_saveProgress());
-      _showControls();
+      // Only refresh the auto-hide timer — a quiet remote seek ends in a
+      // 'playing' event and must not resurrect hidden controls.
+      if (_controlsVisible) _showControls();
     }
     if (event['type'] == 'position' &&
         !selecting &&
@@ -1249,7 +1256,13 @@ class _PlayerPageState extends State<PlayerPage> {
       }
       return KeyEventResult.ignored;
     }
-    if (_controlsVisible) return KeyEventResult.ignored;
+    // Yield to traversal only while an overlay button actually holds
+    // focus. If the surface still has it (e.g. controls popped during a
+    // remote seek), arrows keep seeking/adjusting volume until the
+    // overlay auto-hides or the user wakes a button via Back.
+    if (_controlsVisible && !_surfaceFocus.hasFocus) {
+      return KeyEventResult.ignored;
+    }
     if (confirm) {
       if (ready) unawaited(_togglePlayback());
       return KeyEventResult.handled;

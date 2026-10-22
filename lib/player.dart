@@ -240,8 +240,14 @@ class _PlayerPageState extends State<PlayerPage> {
   // Separate nodes per surface: the embedded and fullscreen players are
   // both alive during fullscreen, and a shared node attaches to whichever
   // widget built last — focus could land on the offstage embedded copy.
-  final FocusNode _surfaceFocus = FocusNode(debugLabel: 'video-surface');
-  final FocusNode _embeddedFocus = FocusNode(debugLabel: 'embedded-surface');
+  // skipTraversal on the fullscreen node only: its rect covers every
+  // button, so directional moves could "nearest" right back onto it.
+  // Re-entry is always explicit requestFocus (wake, auto-hide, back,
+  // exit). The embedded node stays traversable — ↑ must reach it again.
+  final FocusNode _surfaceFocus =
+      FocusNode(debugLabel: 'video-surface', skipTraversal: true);
+  final FocusNode _embeddedFocus =
+      FocusNode(debugLabel: 'embedded-surface');
   final FocusNode _playFocus = FocusNode(debugLabel: 'play-button');
 
   void _refresh() {
@@ -262,16 +268,10 @@ class _PlayerPageState extends State<PlayerPage> {
     });
   }
 
-  /// Remote back key (or remote wake) in fullscreen: bring the overlay up
-  /// and hand focus to the play button for arrow navigation.
+  /// Remote back key in fullscreen: surface the overlay while keeping
+  /// focus on the video — OK then enters button mode explicitly.
   void _wakeControls() {
     _showControls();
-    if (_fullscreen) {
-      // The overlay buttons only exist after this frame builds.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _controlsVisible) _playFocus.requestFocus();
-      });
-    }
   }
 
   void _hideControls() {
@@ -951,7 +951,11 @@ class _PlayerPageState extends State<PlayerPage> {
         child: LayoutBuilder(builder: (context, constraints) {
       return Stack(fit: StackFit.expand, children: [
         const ColoredBox(color: Colors.black),
-        if (ready) controller.videoView(),
+        // The platform view registers its own focusable node whose rect
+        // covers the whole surface — once traversal lands on it, no arrow
+        // key can leave. All remote keys are handled by _surfaceFocus, so
+        // keep the view itself out of the focus tree entirely.
+        if (ready) ExcludeFocus(child: controller.videoView()),
         GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapUp: (details) => _tapVideo(details, constraints.maxWidth),
@@ -1053,18 +1057,20 @@ class _PlayerPageState extends State<PlayerPage> {
                             style: const TextStyle(
                                 fontSize: 12, color: Colors.white)))),
                 if (lines.length > 1)
-                  PopupMenuButton<String>(
-                    tooltip: uiText(context, '切换线路'),
-                    enabled: !selecting,
-                    onSelected: _changeLine,
-                    itemBuilder: (_) => [
-                      for (final name in lines.keys)
-                        PopupMenuItem(value: name, child: Text(name))
-                    ],
-                    child: const SizedBox(
-                        width: 36,
-                        height: 36,
-                        child: Icon(Icons.swap_horiz, color: Colors.white)),
+                  _MenuFocus(
+                    child: PopupMenuButton<String>(
+                      tooltip: uiText(context, '切换线路'),
+                      enabled: !selecting,
+                      onSelected: _changeLine,
+                      itemBuilder: (_) => [
+                        for (final name in lines.keys)
+                          PopupMenuItem(value: name, child: Text(name))
+                      ],
+                      child: const SizedBox(
+                          width: 36,
+                          height: 36,
+                          child: Icon(Icons.swap_horiz, color: Colors.white)),
+                    ),
                   )
                 else
                   _overlayButton('仅一条线路', Icons.swap_horiz,
@@ -1209,7 +1215,8 @@ class _PlayerPageState extends State<PlayerPage> {
                                 : unawaited(_select(next, startMs: 0))
                             : null),
                     if (videoTracks.isNotEmpty)
-                      PopupMenuButton<Object?>(
+                      _MenuFocus(
+                      child: PopupMenuButton<Object?>(
                         tooltip: uiText(context, '清晰度'),
                         enabled: ready && !selecting,
                         onSelected: (value) => unawaited(
@@ -1242,9 +1249,10 @@ class _PlayerPageState extends State<PlayerPage> {
                                     style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 11)))),
-                      ),
+                      )),
                     if (!widget.live)
-                    PopupMenuButton<double>(
+                    _MenuFocus(
+                    child: PopupMenuButton<double>(
                       tooltip: uiText(context, '倍速'),
                       enabled: ready,
                       initialValue: rate,
@@ -1261,7 +1269,7 @@ class _PlayerPageState extends State<PlayerPage> {
                               child: LocalizedText('${rate}x',
                                   style: const TextStyle(
                                       color: Colors.white, fontSize: 11)))),
-                    ),
+                    )),
                     _overlayButton(
                         fullscreen ? '退出全屏' : '全屏',
                         fullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
@@ -1777,6 +1785,35 @@ class _SurfaceFocus extends StatelessWidget {
                       width: 2.5)),
               child: child),
           child: child));
+}
+
+/// Orange ring for overlay controls that can't take a focusColor (e.g.
+/// PopupMenuButton): the wrapper can't be focused itself, it just mirrors
+/// a descendant's focus state as a visible border.
+class _MenuFocus extends StatefulWidget {
+  const _MenuFocus({required this.child});
+  final Widget child;
+
+  @override
+  State<_MenuFocus> createState() => _MenuFocusState();
+}
+
+class _MenuFocusState extends State<_MenuFocus> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) => Focus(
+      canRequestFocus: false,
+      onFocusChange: (value) => setState(() => _focused = value),
+      child: DecoratedBox(
+          decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                  color: _focused
+                      ? const Color(0xFFFF7A00)
+                      : Colors.transparent,
+                  width: 2)),
+          child: widget.child));
 }
 
 /// DLNA device picker: runs SSDP discovery on open and lists renderers.

@@ -8,6 +8,10 @@ const _canvas = Color(0xfff7f7f7);
 ThemeData youyingTheme() => ThemeData(
       colorScheme: ColorScheme.fromSeed(seedColor: _orange, primary: _orange),
       scaffoldBackgroundColor: _canvas,
+      // Visible focus ring for D-pad navigation on Android TV: every
+      // InkWell/chip/button already participates in focus traversal, it only
+      // needed a noticeable highlight.
+      focusColor: const Color(0x4dff6500),
       useMaterial3: true,
       appBarTheme: const AppBarTheme(
           backgroundColor: _canvas,

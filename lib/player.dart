@@ -893,6 +893,11 @@ class _PlayerPageState extends State<PlayerPage> {
       await SystemChrome.setPreferredOrientations([]);
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
       if (mounted) setState(() => _fullscreen = false);
+      // Returning from fullscreen should land the remote back on the video
+      // so another OK press re-enters it without re-navigating the page.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _surfaceFocus.requestFocus();
+      });
     }
   }
 
@@ -1000,7 +1005,18 @@ class _PlayerPageState extends State<PlayerPage> {
             top: 0,
             left: 0,
             right: 0,
-            child: DecoratedBox(
+            child: Focus(
+              // Above the top bar there is nothing — ↑ returns focus to the
+              // video so arrows resume seek/volume instead of dead-ending.
+              onKeyEvent: (node, event) {
+                if (event is KeyDownEvent &&
+                    event.logicalKey == LogicalKeyboardKey.arrowUp) {
+                  _surfaceFocus.requestFocus();
+                  return KeyEventResult.handled;
+                }
+                return KeyEventResult.ignored;
+              },
+              child: DecoratedBox(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
                     begin: Alignment.topCenter,
@@ -1067,13 +1083,24 @@ class _PlayerPageState extends State<PlayerPage> {
                   _overlayButton('详情介绍', Icons.info_outline,
                       () => unawaited(_showDetails())),
               ]),
-            ),
+            )),
           ),
           Positioned(
             bottom: 0,
             left: 0,
             right: 0,
-            child: DecoratedBox(
+            child: Focus(
+              // Below the bottom controls there is nothing — ↓ returns focus
+              // to the video so arrows resume seek/volume.
+              onKeyEvent: (node, event) {
+                if (event is KeyDownEvent &&
+                    event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                  _surfaceFocus.requestFocus();
+                  return KeyEventResult.handled;
+                }
+                return KeyEventResult.ignored;
+              },
+              child: DecoratedBox(
                 decoration: const BoxDecoration(
                   gradient: LinearGradient(
                       begin: Alignment.topCenter,
@@ -1227,7 +1254,7 @@ class _PlayerPageState extends State<PlayerPage> {
                                 : () => unawaited(_enterFullscreen())
                             : null),
                   ]),
-                ])),
+                ]))),
           ),
         ],
       ]);
@@ -1269,7 +1296,13 @@ class _PlayerPageState extends State<PlayerPage> {
       return KeyEventResult.ignored;
     }
     if (confirm) {
-      if (ready) unawaited(_togglePlayback());
+      // Overlay up + surface focused: OK enters "button mode" rather than
+      // toggling playback — the user surfaced the controls to reach them.
+      if (_controlsVisible) {
+        _playFocus.requestFocus();
+      } else if (ready) {
+        unawaited(_togglePlayback());
+      }
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowLeft ||
@@ -1647,15 +1680,23 @@ class _FullscreenPlayer extends StatelessWidget {
 
   final _PlayerPageState player;
 
-  // Back key: first press wakes the control overlay, pressing back while the
-  // overlay is up exits fullscreen. This keeps "back" predictable on remotes.
+  // Back semantics on remotes: overlay hidden → wake it (focus moves to a
+  // button); an overlay button focused → return focus to the video; video
+  // focused → exit fullscreen entirely.
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-      animation: player._repaintFullscreen,
+      // Focus changes drive canPop too, not just control visibility.
+      animation: Listenable.merge(
+          [player._repaintFullscreen, player._surfaceFocus]),
       builder: (context, _) => PopScope(
-          canPop: player._controlsVisible,
+          canPop: player._controlsVisible && player._surfaceFocus.hasFocus,
           onPopInvokedWithResult: (didPop, _) {
-            if (!didPop) player._wakeControls();
+            if (didPop) return;
+            if (player._controlsVisible) {
+              player._surfaceFocus.requestFocus();
+            } else {
+              player._wakeControls();
+            }
           },
           child: Scaffold(
               backgroundColor: Colors.black,

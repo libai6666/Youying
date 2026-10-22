@@ -1353,11 +1353,12 @@ class _SavedEntries extends StatelessWidget {
                   entry: entry,
                   watchInfo: favorites ? null : library.watchSummary(entry),
                   trailing: favorites
-                      ? IconButton(
-                          tooltip: uiText(context, '取消收藏'),
-                          icon:
-                              const Icon(Icons.star, color: _orange, size: 20),
-                          onPressed: () => library.toggleFavorite(entry))
+                      ? ExcludeFocus(
+                          child: IconButton(
+                              tooltip: uiText(context, '取消收藏'),
+                              icon: const Icon(Icons.star,
+                                  color: _orange, size: 20),
+                              onPressed: () => library.toggleFavorite(entry)))
                       : null,
                   onTap: () => Navigator.push<void>(
                       context,

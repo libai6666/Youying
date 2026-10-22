@@ -531,13 +531,19 @@ class EntryList extends StatelessWidget {
                     child: _CatalogCard(
                       entry: entry,
                       compact: compact,
-                      trailing: IconButton(
-                        tooltip: uiText(
-                            context, library.isFavorite(entry) ? '取消收藏' : '收藏'),
-                        icon: Icon(library.isFavorite(entry)
-                            ? Icons.favorite
-                            : Icons.favorite_border),
-                        onPressed: () => library.toggleFavorite(entry),
+                      // Keep the heart out of D-pad traversal so remote OK on
+                      // a card always opens the detail page; favoriting still
+                      // works via touch here and the star on the detail page.
+                      trailing: ExcludeFocus(
+                        child: IconButton(
+                          tooltip: uiText(
+                              context,
+                              library.isFavorite(entry) ? '取消收藏' : '收藏'),
+                          icon: Icon(library.isFavorite(entry)
+                              ? Icons.favorite
+                              : Icons.favorite_border),
+                          onPressed: () => library.toggleFavorite(entry),
+                        ),
                       ),
                       onTap: () => Navigator.push<void>(
                         context,

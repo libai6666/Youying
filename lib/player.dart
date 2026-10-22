@@ -907,7 +907,9 @@ class _PlayerPageState extends State<PlayerPage> {
     final progress = _scrubMs ?? positionMs;
     return _SurfaceFocus(
         node: _surfaceFocus,
-        autofocus: fullscreen,
+        // Always grab initial focus: gives TVs a D-pad starting point on
+        // the detail page and on entering fullscreen; invisible on touch.
+        autofocus: true,
         onKey: (event) => _onSurfaceKey(event, fullscreen: fullscreen),
         child: LayoutBuilder(builder: (context, constraints) {
       return Stack(fit: StackFit.expand, children: [

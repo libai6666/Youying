@@ -1,6 +1,7 @@
 package dev.youying.app
 
 import android.content.Context
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -144,6 +145,18 @@ class MediaBridge(
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         try {
             val data = call.arguments as? Map<*, *> ?: throw IllegalArgumentException("arguments required")
+            if (call.method == "volume") {
+                // Remote volume keys: adjust system media volume with the
+                // native volume UI, independent of any player instance.
+                val dir = (data["direction"] as? Number)?.toInt() ?: 0
+                (context.getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+                    .adjustStreamVolume(
+                        AudioManager.STREAM_MUSIC,
+                        if (dir >= 0) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
+                        AudioManager.FLAG_SHOW_UI)
+                result.success(null)
+                return
+            }
             val id = (data["playerId"] as? Number)?.toLong()
                 ?: throw IllegalArgumentException("playerId required")
             if (!active) throw IllegalStateException("Bridge already disposed")

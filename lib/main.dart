@@ -579,6 +579,8 @@ class _DetailPageState extends State<DetailPage> {
   String? error;
   final Map<String, MediaEntry> _choices = {};
   final Map<String, int?> _sourceHeights = {};
+  final Set<String> _failedSourceIds = {};
+  int _autoSwitches = 0;
   bool _manualSourcePick = false;
   int _generation = 0;
   bool findingSources = false;
@@ -618,9 +620,29 @@ class _DetailPageState extends State<DetailPage> {
 
   void _maybeUpgradeSource() {
     if (_manualSourcePick) return;
-    final best =
-        highestHeightChoice(_choices.values, _sourceHeights, entry.id);
+    final best = highestHeightChoice(
+        _choices.values
+            .where((choice) => !_failedSourceIds.contains(choice.id)),
+        _sourceHeights,
+        entry.id);
     if (best != null) _switchSource(best);
+  }
+
+  /// Async playback errors (dead CDN, geo-blocked stream): walk the source
+  /// list by descending probed height, skipping sources that already
+  /// failed. Capped so a fully-broken catalog does not loop forever.
+  void _autoSwitchOnError() {
+    if (_failedSourceIds.add(entry.id) && _autoSwitches < 4) {
+      final remaining = _choices.values
+          .where((choice) => !_failedSourceIds.contains(choice.id))
+          .toList()
+        ..sort((a, b) =>
+            (_sourceHeights[b.id] ?? 0).compareTo(_sourceHeights[a.id] ?? 0));
+      if (remaining.isEmpty) return;
+      _autoSwitches++;
+      _manualSourcePick = false;
+      _switchSource(remaining.first);
+    }
   }
 
   void _preparePlayback(MediaEntry next) {
@@ -872,6 +894,7 @@ class _DetailPageState extends State<DetailPage> {
                     library: library,
                     embedded: true,
                     onChooseSource: loading ? null : _pickSource,
+                    onPlaybackError: _autoSwitchOnError,
                     onShowDetails: _showDescription,
                     initial: _initialEpisode,
                     initialPositionMs: _initialPosition,

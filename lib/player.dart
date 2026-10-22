@@ -128,6 +128,15 @@ class MediaController {
       });
   Future<void> dispose() => call('dispose');
 
+  /// System media volume for remote volume keys. Global (no playerId).
+  static Future<void> adjustVolume(int direction) {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return Future.value();
+    }
+    return methods
+        .invokeMethod<void>('volume', {'direction': direction, 'playerId': 0});
+  }
+
   Widget videoView() => AndroidView(
         viewType: 'flutter_player_av/player_view',
         creationParams: {'playerId': playerId},
@@ -149,6 +158,7 @@ class PlayerPage extends StatefulWidget {
       this.onChooseSource,
       this.onShowDetails,
       this.onPlaybackChanged,
+      this.onPlaybackError,
       this.headers = const {},
       this.live = false});
   final MediaEntry entry;
@@ -162,6 +172,11 @@ class PlayerPage extends StatefulWidget {
   final VoidCallback? onChooseSource;
   final VoidCallback? onShowDetails;
   final void Function(Episode episode, int positionMs)? onPlaybackChanged;
+
+  /// Fired on asynchronous playback errors so hosts can react (e.g. the
+  /// detail page falling back to another source). Live mode zaps channels
+  /// internally and does not call this until it gives up.
+  final VoidCallback? onPlaybackError;
   final Map<String, String> headers;
 
   /// Live streams have no meaningful progress to persist and cannot be
@@ -205,6 +220,8 @@ class _PlayerPageState extends State<PlayerPage> {
   int? _scrubMs;
   List<VideoTrack> videoTracks = const [];
   VideoTrack? _manualTrack;
+  final FocusNode _surfaceFocus = FocusNode(debugLabel: 'video-surface');
+  final FocusNode _playFocus = FocusNode(debugLabel: 'play-button');
 
   void _refresh() {
     if (!mounted) return;
@@ -219,8 +236,23 @@ class _PlayerPageState extends State<PlayerPage> {
     _controlsTimer = Timer(const Duration(seconds: 5), () {
       if (!mounted || !playing || _holdActive || _scrubMs != null) return;
       _controlsVisible = false;
+      if (_fullscreen) _surfaceFocus.requestFocus();
       _refresh();
     });
+  }
+
+  /// Remote back key (or remote wake) in fullscreen: bring the overlay up
+  /// and hand focus to the play button for arrow navigation.
+  void _wakeControls() {
+    _showControls();
+    if (_fullscreen) _playFocus.requestFocus();
+  }
+
+  void _hideControls() {
+    _controlsTimer?.cancel();
+    _controlsVisible = false;
+    if (_fullscreen) _surfaceFocus.requestFocus();
+    _refresh();
   }
 
   @override
@@ -366,6 +398,7 @@ class _PlayerPageState extends State<PlayerPage> {
             _switchChannel(1);
           } else {
             error = '播放失败，请检查地址、格式和网络';
+            if (!widget.live) widget.onPlaybackError?.call();
           }
       }
     });
@@ -655,6 +688,8 @@ class _PlayerPageState extends State<PlayerPage> {
     _controlsTimer?.cancel();
     if (_fullscreen) playerFullscreenViewport.value = false;
     subscription?.cancel();
+    _surfaceFocus.dispose();
+    _playFocus.dispose();
     if (ready) {
       unawaited(_saveProgress());
       controller.dispose();
@@ -854,8 +889,10 @@ class _PlayerPageState extends State<PlayerPage> {
       const SnackBar(content: LocalizedText('当前只有一条播放线路；可点右侧“换源”查找其他来源')));
 
   Widget _overlayButton(
-          String tooltip, IconData icon, VoidCallback? onPressed) =>
+          String tooltip, IconData icon, VoidCallback? onPressed,
+          {FocusNode? focusNode}) =>
       IconButton(
+        focusNode: focusNode,
         tooltip: uiText(context, tooltip),
         icon: Icon(icon,
             size: 21, color: onPressed == null ? Colors.white38 : Colors.white),
@@ -868,7 +905,11 @@ class _PlayerPageState extends State<PlayerPage> {
     final lines = widget.entry.lines;
     final next = nextEpisodeOnLine(lines, line, episode);
     final progress = _scrubMs ?? positionMs;
-    return LayoutBuilder(builder: (context, constraints) {
+    return _SurfaceFocus(
+        node: _surfaceFocus,
+        autofocus: fullscreen,
+        onKey: (event) => _onSurfaceKey(event, fullscreen: fullscreen),
+        child: LayoutBuilder(builder: (context, constraints) {
       return Stack(fit: StackFit.expand, children: [
         const ColoredBox(color: Colors.black),
         if (ready) controller.videoView(),
@@ -1063,7 +1104,8 @@ class _PlayerPageState extends State<PlayerPage> {
                     _overlayButton(
                         playing ? '暂停' : (_completed ? '重播' : '播放'),
                         playing ? Icons.pause : Icons.play_arrow,
-                        ready ? () => unawaited(_togglePlayback()) : null),
+                        ready ? () => unawaited(_togglePlayback()) : null,
+                        focusNode: _playFocus),
                     Expanded(
                         child: FittedBox(
                             fit: BoxFit.scaleDown,
@@ -1163,21 +1205,34 @@ class _PlayerPageState extends State<PlayerPage> {
           ),
         ],
       ]);
-    });
+    }));
   }
 
-  /// TV remote (D-pad) mapping. Android sends DPAD_LEFT/… as arrow keys and
-  /// DPAD_CENTER as select/enter. Live mode: left/right zap channels and
-  /// up opens the channel sheet; VOD: left/right seek 10 s, up opens the
-  /// episode sheet. Down toggles the control overlay.
-  KeyEventResult _onRemoteKey(FocusNode node, KeyEvent event) {
+  /// Remote/D-pad handling scoped to the video surface.
+  ///
+  /// - Portrait/embedded: arrows are NOT consumed so focus traversal keeps
+  ///   working (up reaches the app bar, down reaches episode/source rows);
+  ///   OK on the surface jumps straight into fullscreen playback.
+  /// - Fullscreen with the overlay hidden: left/right seek (or zap live
+  ///   channels), up/down adjust system volume, OK toggles play/pause.
+  /// - Fullscreen with the overlay visible: every key is ignored so the
+  ///   overlay buttons receive traversal and activation themselves.
+  KeyEventResult _onSurfaceKey(KeyEvent event, {required bool fullscreen}) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
-    if (key == LogicalKeyboardKey.select ||
+    final confirm = key == LogicalKeyboardKey.select ||
         key == LogicalKeyboardKey.enter ||
-        key == LogicalKeyboardKey.numpadEnter) {
+        key == LogicalKeyboardKey.numpadEnter;
+    if (!fullscreen) {
+      if (confirm) {
+        unawaited(_enterFullscreen());
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+    if (_controlsVisible) return KeyEventResult.ignored;
+    if (confirm) {
       if (ready) unawaited(_togglePlayback());
-      _showControls();
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowLeft ||
@@ -1189,17 +1244,12 @@ class _PlayerPageState extends State<PlayerPage> {
         unawaited(_seek(
             (positionMs + delta * 10000).clamp(0, durationMs).toInt()));
       }
-      _showControls();
       return KeyEventResult.handled;
     }
-    if (key == LogicalKeyboardKey.arrowUp) {
-      if (ready && !selecting && line != null) {
-        unawaited(_showAllEpisodes());
-      }
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.arrowDown) {
-      _tapVideoToggle();
+    if (key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.arrowDown) {
+      unawaited(MediaController.adjustVolume(
+          key == LogicalKeyboardKey.arrowUp ? 1 : -1));
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -1207,9 +1257,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
   void _tapVideoToggle() {
     if (_controlsVisible) {
-      _controlsTimer?.cancel();
-      _controlsVisible = false;
-      _refresh();
+      _hideControls();
     } else {
       _showControls();
     }
@@ -1273,11 +1321,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (widget.embedded) return Column(children: content);
     return Scaffold(
       appBar: AppBar(title: Text(widget.entry.title, maxLines: 1)),
-      body: Focus(
-        autofocus: true,
-        onKeyEvent: _onRemoteKey,
-        child: ListView(padding: const EdgeInsets.all(16), children: content),
-      ),
+      body: ListView(padding: const EdgeInsets.all(16), children: content),
     );
   }
 }
@@ -1566,18 +1610,54 @@ class _FullscreenPlayer extends StatelessWidget {
 
   final _PlayerPageState player;
 
+  // Back key: first press wakes the control overlay, pressing back while the
+  // overlay is up exits fullscreen. This keeps "back" predictable on remotes.
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
       animation: player._repaintFullscreen,
-      builder: (context, _) => Scaffold(
-          backgroundColor: Colors.black,
-          body: Focus(
-              autofocus: true,
-              onKeyEvent: player._onRemoteKey,
-              child: Center(
+      builder: (context, _) => PopScope(
+          canPop: player._controlsVisible,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) player._wakeControls();
+          },
+          child: Scaffold(
+              backgroundColor: Colors.black,
+              body: Center(
                   child: AspectRatio(
                       aspectRatio: 16 / 9,
                       child: player._videoSurface(fullscreen: true))))));
+}
+
+/// Focusable wrapper for the video surface: draws a visible orange ring
+/// while focused so remote users can tell where the D-pad focus is.
+class _SurfaceFocus extends StatelessWidget {
+  const _SurfaceFocus(
+      {required this.node,
+      required this.onKey,
+      required this.child,
+      this.autofocus = false});
+
+  final FocusNode node;
+  final KeyEventResult Function(KeyEvent event) onKey;
+  final Widget child;
+  final bool autofocus;
+
+  @override
+  Widget build(BuildContext context) => Focus(
+      focusNode: node,
+      autofocus: autofocus,
+      onKeyEvent: (_, event) => onKey(event),
+      child: AnimatedBuilder(
+          animation: node,
+          builder: (context, child) => DecoratedBox(
+              decoration: BoxDecoration(
+                  border: Border.all(
+                      color: node.hasFocus
+                          ? const Color(0xFFFF7A00)
+                          : Colors.transparent,
+                      width: 2.5)),
+              child: child),
+          child: child));
 }
 
 /// DLNA device picker: runs SSDP discovery on open and lists renderers.

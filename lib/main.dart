@@ -233,12 +233,49 @@ class _SearchPageState extends State<SearchPage> {
           ));
 }
 
-class _HistoryChip extends StatelessWidget {
+class _HistoryChip extends StatefulWidget {
   const _HistoryChip(
       {required this.keyword, required this.onOpen, required this.onDelete});
   final String keyword;
   final VoidCallback onOpen;
   final VoidCallback onDelete;
+
+  @override
+  State<_HistoryChip> createState() => _HistoryChipState();
+}
+
+class _HistoryChipState extends State<_HistoryChip> {
+  // The delete node is skipped by traversal so ↓ always lands on the
+  // keyword text; the keyword's own → explicitly hands focus to it, and
+  // ← on it returns to the keyword.
+  late final FocusNode _textNode = FocusNode(
+      debugLabel: 'history-text',
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.arrowRight) {
+          _deleteNode.requestFocus();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      });
+  late final FocusNode _deleteNode = FocusNode(
+      debugLabel: 'history-delete',
+      skipTraversal: true,
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+          _textNode.requestFocus();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      });
+
+  @override
+  void dispose() {
+    _textNode.dispose();
+    _deleteNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
@@ -251,16 +288,18 @@ class _HistoryChip extends StatelessWidget {
                 constraints:
                     BoxConstraints(maxWidth: constraints.maxWidth - 44),
                 child: InkWell(
-                    onTap: onOpen,
+                    focusNode: _textNode,
+                    onTap: widget.onOpen,
                     child: Padding(
                         padding: const EdgeInsets.fromLTRB(10, 7, 4, 7),
-                        child: Text(keyword,
+                        child: Text(widget.keyword,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis)))),
             Tooltip(
-                message: uiText(context, '删除搜索记录：$keyword'),
+                message: uiText(context, '删除搜索记录：${widget.keyword}'),
                 child: InkWell(
-                    onTap: onDelete,
+                    focusNode: _deleteNode,
+                    onTap: widget.onDelete,
                     customBorder: const CircleBorder(),
                     child: const Padding(
                         padding: EdgeInsets.all(7),

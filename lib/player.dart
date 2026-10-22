@@ -1033,6 +1033,10 @@ class _PlayerPageState extends State<PlayerPage> {
                     end: Alignment.bottomCenter,
                     colors: [Colors.black87, Colors.transparent]),
               ),
+              // Local Material hosts the buttons' focus ink — without it
+              // the highlight paints under the gradient and looks absent.
+              child: Material(
+              color: Colors.transparent,
               child: Row(children: [
                 if (fullscreen)
                   _overlayButton('退出全屏', Icons.arrow_back,
@@ -1093,7 +1097,7 @@ class _PlayerPageState extends State<PlayerPage> {
                   _overlayButton('详情介绍', Icons.info_outline,
                       () => unawaited(_showDetails())),
               ]),
-            )),
+            ))),
           ),
           Positioned(
             bottom: 0,
@@ -1118,6 +1122,8 @@ class _PlayerPageState extends State<PlayerPage> {
                       end: Alignment.bottomCenter,
                       colors: [Colors.transparent, Colors.black87]),
                 ),
+                child: Material(
+                color: Colors.transparent,
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
                   if (!widget.live)
                   SizedBox(
@@ -1265,7 +1271,7 @@ class _PlayerPageState extends State<PlayerPage> {
                                 : () => unawaited(_enterFullscreen())
                             : null),
                   ]),
-                ]))),
+                ])))),
           ),
         ],
       ]);

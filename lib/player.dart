@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'cast.dart';
 import 'catalog.dart';
 import 'quality.dart';
 import 'ui_locale.dart';
@@ -606,6 +607,32 @@ class _PlayerPageState extends State<PlayerPage> {
     if (mounted && resume) await controller.play();
   }
 
+  Future<void> _castTo(CastDevice device) async {
+    final current = episode;
+    if (current == null) return;
+    try {
+      await CastClient.cast(device,
+          url: current.url,
+          title: '${widget.entry.title} · ${current.name}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: LocalizedText('已推送到 ${device.name}')));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: LocalizedText('投屏失败，请重试')));
+      }
+    }
+  }
+
+  Future<void> _showCastPicker() => showModalBottomSheet<void>(
+      context: context,
+      builder: (sheet) => _CastSheet(onPicked: (device) {
+            Navigator.of(sheet).pop();
+            unawaited(_castTo(device));
+          }));
+
   Future<void> _showAllEpisodes() => showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -954,6 +981,13 @@ class _PlayerPageState extends State<PlayerPage> {
                 if (widget.onChooseSource != null)
                   _overlayButton('换源', Icons.movie_filter_outlined,
                       () => unawaited(_chooseSource())),
+                _overlayButton('投屏', Icons.cast_outlined,
+                    episode == null ? null : () => unawaited(_showCastPicker())),
+                // Portrait keeps its dedicated 下载剧集 row below the video;
+                // the overlay button only exists for fullscreen.
+                if (fullscreen)
+                  _overlayButton('下载剧集', Icons.download_outlined,
+                      episode == null || widget.live ? null : _download),
                 AnimatedBuilder(
                     animation: widget.library,
                     builder: (_, __) => _overlayButton(
@@ -962,8 +996,6 @@ class _PlayerPageState extends State<PlayerPage> {
                             ? Icons.star
                             : Icons.star_outline,
                         () => widget.library.toggleFavorite(widget.entry))),
-                _overlayButton('下载剧集', Icons.download_outlined,
-                    episode == null || widget.live ? null : _download),
                 if (widget.onShowDetails != null)
                   _overlayButton('详情介绍', Icons.info_outline,
                       () => unawaited(_showDetails())),
@@ -1217,11 +1249,13 @@ class _PlayerPageState extends State<PlayerPage> {
             label: const LocalizedText('返回原资源'),
           ),
         if (!widget.live)
-          TextButton.icon(
-            onPressed: episode == null ? null : _download,
-            icon: const Icon(Icons.download_outlined),
-            label: const LocalizedText('下载剧集'),
-          ),
+          Tooltip(
+              message: uiText(context, '下载剧集'),
+              child: TextButton.icon(
+                onPressed: episode == null ? null : _download,
+                icon: const Icon(Icons.download_outlined),
+                label: const LocalizedText('下载剧集'),
+              )),
         if (episode != null &&
             widget.library.downloadedFile(widget.entry.id, episode!) != null)
           TextButton.icon(
@@ -1544,4 +1578,86 @@ class _FullscreenPlayer extends StatelessWidget {
                   child: AspectRatio(
                       aspectRatio: 16 / 9,
                       child: player._videoSurface(fullscreen: true))))));
+}
+
+/// DLNA device picker: runs SSDP discovery on open and lists renderers.
+class _CastSheet extends StatefulWidget {
+  const _CastSheet({required this.onPicked});
+  final ValueChanged<CastDevice> onPicked;
+
+  @override
+  State<_CastSheet> createState() => _CastSheetState();
+}
+
+class _CastSheetState extends State<_CastSheet> {
+  List<CastDevice> devices = const [];
+  bool searching = true;
+  bool failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_scan());
+  }
+
+  Future<void> _scan() async {
+    try {
+      final found = await CastClient.discover();
+      if (mounted) {
+        setState(() {
+          devices = found;
+          searching = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          searching = false;
+          failed = true;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+      child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Align(
+                alignment: Alignment.centerLeft,
+                child: LocalizedText('选择投屏设备',
+                    style: TextStyle(fontWeight: FontWeight.w600))),
+            const SizedBox(height: 12),
+            if (searching)
+              const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: CircularProgressIndicator())
+            else if (devices.isEmpty)
+              const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: LocalizedText(
+                      '未发现设备，请确认电视与手机在同一网络后重试'))
+            else
+              for (final device in devices)
+                ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.tv_outlined),
+                    title: Text(device.name,
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    onTap: () => widget.onPicked(device)),
+            if (!searching)
+              Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                      onPressed: () {
+                        setState(() {
+                          devices = const [];
+                          searching = true;
+                          failed = false;
+                        });
+                        unawaited(_scan());
+                      },
+                      child: const LocalizedText('重新搜索'))),
+          ])));
 }

@@ -188,6 +188,12 @@ const _english = <String, String>{
   '下载剧集': 'Download episodes',
   '详情介绍': 'Details',
   '播放下一集': 'Next episode',
+  '投屏': 'Cast',
+  '选择投屏设备': 'Choose a casting device',
+  '未发现设备，请确认电视与手机在同一网络后重试':
+      'No devices found — make sure the TV and phone share a network, then retry',
+  '投屏失败，请重试': 'Casting failed, please retry',
+  '重新搜索': 'Search again',
   '播放上一集': 'Previous episode',
   '上一个频道': 'Previous channel',
   '下一个频道': 'Next channel',
@@ -431,6 +437,7 @@ final _rules = <(RegExp, String Function(RegExpMatch))>[
   (RegExp(r'^(\d+) 个$'), (m) => '${m[1]}'),
   (RegExp(r'^(\d+) 秒后播放下一集$'), (m) => 'Next episode in ${m[1]} s'),
   (RegExp(r'^全部 (\d+) 集$'), (m) => 'All ${m[1]} episodes'),
+  (RegExp(r'^已推送到 (.*)$'), (m) => 'Cast to ${m[1]}'),
   (RegExp(r'^下载 (\d+) 集$'), (m) => 'Download ${m[1]} episodes'),
   (
     RegExp(r'^已加入 (\d+) 集，请在下载列表查看进度$'),

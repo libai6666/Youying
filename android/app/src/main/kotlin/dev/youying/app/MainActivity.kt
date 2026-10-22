@@ -6,12 +6,14 @@ import io.flutter.embedding.engine.FlutterEngine
 class MainActivity : FlutterActivity() {
     private var mediaBridge: MediaBridge? = null
     private var downloadBridge: DownloadBridge? = null
+    private var castBridge: CastBridge? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         mediaBridge = MediaBridge(this, flutterEngine.dartExecutor.binaryMessenger,
             flutterEngine.platformViewsController.registry)
         downloadBridge = DownloadBridge(this, flutterEngine.dartExecutor.binaryMessenger)
+        castBridge = CastBridge(this, flutterEngine.dartExecutor.binaryMessenger)
     }
 
     override fun onStop() {

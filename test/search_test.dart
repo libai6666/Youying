@@ -181,11 +181,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(requested, ['新片名']);
     expect(lib.searchHistory, ['新片名', '旧记录']);
-    expect(find.byType(InputChip), findsNothing);
+    expect(find.text('旧记录'), findsNothing);
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.byType(SearchResultsPage), findsNothing);
-    final oldChip = find.widgetWithText(InputChip, '旧记录');
+    final oldChip = find.widgetWithText(InkWell, '旧记录');
     await tester.tap(oldChip);
     await tester.pump();
     await tester.runAsync(() async {
@@ -227,7 +227,8 @@ void main() {
                 .copyWith(textScaler: TextScaler.linear(1.4)),
             child: child!),
         home: Scaffold(body: SearchPage(library: lib))));
-    expect(find.byType(InputChip), findsOneWidget);
+    expect(
+        find.text(List.filled(30, '这是很长的影片名字').join()), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

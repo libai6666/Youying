@@ -211,16 +211,10 @@ class _SearchPageState extends State<SearchPage> {
                       const SizedBox(height: 4),
                       Wrap(spacing: 8, runSpacing: 4, children: [
                         for (final keyword in history)
-                          InputChip(
-                              backgroundColor: const Color(0xfff6f7f8),
-                              side: BorderSide.none,
-                              deleteIcon: const Icon(Icons.close, size: 16),
-                              label: Text(keyword,
-                                  maxLines: 1, overflow: TextOverflow.ellipsis),
-                              onPressed: () => _openResults(keyword),
-                              deleteButtonTooltipMessage:
-                                  uiText(context, '删除搜索记录：$keyword'),
-                              onDeleted: () => _saveSearchHistory(
+                          _HistoryChip(
+                              keyword: keyword,
+                              onOpen: () => _openResults(keyword),
+                              onDelete: () => _saveSearchHistory(
                                   () => widget.library.removeSearch(keyword))),
                       ]),
                     ]);
@@ -237,6 +231,41 @@ class _SearchPageState extends State<SearchPage> {
                   )),
             ],
           ));
+}
+
+class _HistoryChip extends StatelessWidget {
+  const _HistoryChip(
+      {required this.keyword, required this.onOpen, required this.onDelete});
+  final String keyword;
+  final VoidCallback onOpen;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+      builder: (context, constraints) => Container(
+          decoration: BoxDecoration(
+              color: const Color(0xfff6f7f8),
+              borderRadius: BorderRadius.circular(8)),
+          clipBehavior: Clip.antiAlias,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            ConstrainedBox(
+                constraints: BoxConstraints(
+                    maxWidth: constraints.maxWidth - 44),
+                child: InkWell(
+                    onTap: onOpen,
+                    child: Padding(
+                        padding: const EdgeInsets.fromLTRB(10, 7, 4, 7),
+                        child: Text(keyword,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis)))),
+            Tooltip(
+                message: uiText(context, '删除搜索记录：$keyword'),
+                child: InkWell(
+                    onTap: onDelete,
+                    child: const Padding(
+                        padding: EdgeInsets.all(7),
+                        child: Icon(Icons.close, size: 16)))),
+          ])));
 }
 
 class _SearchInput extends StatefulWidget {
@@ -354,12 +383,15 @@ class _SearchInputState extends State<_SearchInput> {
               )),
             ),
             const SizedBox(width: 8),
-            TextButton(
-                onPressed: widget.enabled &&
-                        widget.controller.text.trim().isNotEmpty
-                    ? widget.onSearch
-                    : null,
-                child: const LocalizedText('搜索')),
+            // Enter on the field already submits; excluding the button
+            // keeps D-pad ↑/↓ between field and content unambiguous.
+            ExcludeFocus(
+                child: TextButton(
+                    onPressed: widget.enabled &&
+                            widget.controller.text.trim().isNotEmpty
+                        ? widget.onSearch
+                        : null,
+                    child: const LocalizedText('搜索'))),
           ]));
 }
 

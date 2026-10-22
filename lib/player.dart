@@ -732,13 +732,7 @@ class _PlayerPageState extends State<PlayerPage> {
         return;
       }
     }
-    if (_controlsVisible) {
-      _controlsTimer?.cancel();
-      _controlsVisible = false;
-      _refresh();
-    } else {
-      _showControls();
-    }
+    _tapVideoToggle();
   }
 
   /// Live channel zap: cycles through the channel list (episodes of the
@@ -1140,6 +1134,55 @@ class _PlayerPageState extends State<PlayerPage> {
     });
   }
 
+  /// TV remote (D-pad) mapping. Android sends DPAD_LEFT/… as arrow keys and
+  /// DPAD_CENTER as select/enter. Live mode: left/right zap channels and
+  /// up opens the channel sheet; VOD: left/right seek 10 s, up opens the
+  /// episode sheet. Down toggles the control overlay.
+  KeyEventResult _onRemoteKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      if (ready) unawaited(_togglePlayback());
+      _showControls();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowRight) {
+      final delta = key == LogicalKeyboardKey.arrowLeft ? -1 : 1;
+      if (widget.live) {
+        if (ready && !selecting) _switchChannel(delta);
+      } else if (ready && durationMs > 0) {
+        unawaited(_seek(
+            (positionMs + delta * 10000).clamp(0, durationMs).toInt()));
+      }
+      _showControls();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      if (ready && !selecting && line != null) {
+        unawaited(_showAllEpisodes());
+      }
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowDown) {
+      _tapVideoToggle();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  void _tapVideoToggle() {
+    if (_controlsVisible) {
+      _controlsTimer?.cancel();
+      _controlsVisible = false;
+      _refresh();
+    } else {
+      _showControls();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final lines = widget.entry.lines;
@@ -1196,7 +1239,11 @@ class _PlayerPageState extends State<PlayerPage> {
     if (widget.embedded) return Column(children: content);
     return Scaffold(
       appBar: AppBar(title: Text(widget.entry.title, maxLines: 1)),
-      body: ListView(padding: const EdgeInsets.all(16), children: content),
+      body: Focus(
+        autofocus: true,
+        onKeyEvent: _onRemoteKey,
+        child: ListView(padding: const EdgeInsets.all(16), children: content),
+      ),
     );
   }
 }
@@ -1490,8 +1537,11 @@ class _FullscreenPlayer extends StatelessWidget {
       animation: player._repaintFullscreen,
       builder: (context, _) => Scaffold(
           backgroundColor: Colors.black,
-          body: Center(
-              child: AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: player._videoSurface(fullscreen: true)))));
+          body: Focus(
+              autofocus: true,
+              onKeyEvent: player._onRemoteKey,
+              child: Center(
+                  child: AspectRatio(
+                      aspectRatio: 16 / 9,
+                      child: player._videoSurface(fullscreen: true))))));
 }

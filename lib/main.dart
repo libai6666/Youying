@@ -253,7 +253,24 @@ class _SearchInput extends StatelessWidget {
       animation: controller,
       builder: (context, _) => Row(children: [
             Expanded(
-              child: TextField(
+              // Up/down on a remote leaves the field for traversal; a text
+              // field would otherwise swallow D-pad keys as cursor moves.
+              child: Focus(
+                onKeyEvent: (node, event) {
+                  if (event is! KeyDownEvent) return KeyEventResult.ignored;
+                  if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                    FocusScope.of(context).nextFocus();
+                    return KeyEventResult.handled;
+                  }
+                  if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+                    FocusScope.of(context)
+                        .focusInDirection(TraversalDirection.up);
+                    return KeyEventResult.handled;
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: TextField(
+                autofocus: true,
                 controller: controller,
                 onSubmitted: (_) => onSearch(),
                 textInputAction: TextInputAction.search,
@@ -275,7 +292,7 @@ class _SearchInput extends StatelessWidget {
                       borderRadius: BorderRadius.circular(26),
                       borderSide: BorderSide.none),
                 ),
-              ),
+              )),
             ),
             const SizedBox(width: 8),
             TextButton(

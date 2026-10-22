@@ -242,15 +242,14 @@ class _HistoryChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
-      builder: (context, constraints) => Container(
-          decoration: BoxDecoration(
-              color: const Color(0xfff6f7f8),
-              borderRadius: BorderRadius.circular(8)),
+      builder: (context, constraints) => Material(
+          color: const Color(0xfff6f7f8),
+          borderRadius: BorderRadius.circular(8),
           clipBehavior: Clip.antiAlias,
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             ConstrainedBox(
-                constraints: BoxConstraints(
-                    maxWidth: constraints.maxWidth - 44),
+                constraints:
+                    BoxConstraints(maxWidth: constraints.maxWidth - 44),
                 child: InkWell(
                     onTap: onOpen,
                     child: Padding(
@@ -262,6 +261,7 @@ class _HistoryChip extends StatelessWidget {
                 message: uiText(context, '删除搜索记录：$keyword'),
                 child: InkWell(
                     onTap: onDelete,
+                    customBorder: const CircleBorder(),
                     child: const Padding(
                         padding: EdgeInsets.all(7),
                         child: Icon(Icons.close, size: 16)))),

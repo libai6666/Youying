@@ -243,17 +243,23 @@ class _SearchInput extends StatefulWidget {
   const _SearchInput(
       {required this.controller,
       required this.enabled,
-      required this.onSearch});
+      required this.onSearch,
+      this.focusNode});
   final TextEditingController controller;
   final bool enabled;
   final VoidCallback onSearch;
+
+  /// Hosts may share a node to restore focus after programmatic unfocus
+  /// (e.g. re-running a search dismisses it on TVs).
+  final FocusNode? focusNode;
 
   @override
   State<_SearchInput> createState() => _SearchInputState();
 }
 
 class _SearchInputState extends State<_SearchInput> {
-  final FocusNode _node = FocusNode(debugLabel: 'search-input');
+  late final FocusNode _node =
+      widget.focusNode ?? FocusNode(debugLabel: 'search-input');
 
   @override
   void initState() {
@@ -267,7 +273,7 @@ class _SearchInputState extends State<_SearchInput> {
 
   @override
   void dispose() {
-    _node.dispose();
+    if (widget.focusNode == null) _node.dispose();
     super.dispose();
   }
 
@@ -282,7 +288,8 @@ class _SearchInputState extends State<_SearchInput> {
                 onKeyEvent: (node, event) {
                   if (event is! KeyDownEvent) return KeyEventResult.ignored;
                   if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-                    FocusScope.of(context).nextFocus();
+                    FocusScope.of(context)
+                        .focusInDirection(TraversalDirection.down);
                     return KeyEventResult.handled;
                   }
                   if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
@@ -343,6 +350,7 @@ class SearchResultsPage extends StatefulWidget {
 
 class _SearchResultsPageState extends State<SearchResultsPage> {
   final TextEditingController query = TextEditingController();
+  final FocusNode _searchNode = FocusNode(debugLabel: 'search-input');
   late final CatalogClient client = widget.client ?? CatalogClient();
   List<MediaEntry> results = [];
   List<CatalogGroup> groups = [];
@@ -387,6 +395,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
     widget.library.removeListener(_sourcesChanged);
     if (widget.client == null) client.dispose();
     query.dispose();
+    _searchNode.dispose();
     super.dispose();
   }
 
@@ -395,6 +404,11 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
       return;
     }
     FocusScope.of(context).unfocus();
+    // unfocus() dismisses the phone keyboard, but on TVs it strands the
+    // remote — hand focus back to the field there.
+    unawaited(MediaController.isTelevision.then((tv) {
+      if (tv && mounted) _searchNode.requestFocus();
+    }));
     final generation = ++_generation;
     setState(() {
       searching = true;
@@ -466,7 +480,8 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
             _SearchInput(
                 controller: query,
                 enabled: widget.library.enabledSources.isNotEmpty,
-                onSearch: _search),
+                onSearch: _search,
+                focusNode: _searchNode),
             const SizedBox(height: 18),
             LocalizedText(status ?? '正在搜索已启用的源…',
                 style: Theme.of(context).textTheme.bodySmall),

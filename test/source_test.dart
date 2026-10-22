@@ -165,24 +165,25 @@ void main() {
     expect((await client.search(source, '万妖 图录')).map((e) => e.title),
         ['万妖图录 第八季']);
     expect((await client.search(source, '当铺')).map((e) => e.title), ['灵魂当铺']);
-    expect(requested, ['76:1:null', '76:2:null']);
+    expect(requested, ['65:1:null', '65:2:null', '76:1:null', '76:2:null']);
   });
 
-  test('first load seeds nine checked presets and no retired endpoints',
-      () async {
+  test('first load seeds checked presets and no retired endpoints', () async {
     final library = await Library.open();
-    expect(sourcePresets, hasLength(9));
+    expect(sourcePresets, hasLength(16));
     expect(sourcePresets.where((p) => p.introducedIn == 2), hasLength(5));
+    expect(sourcePresets.where((p) => p.introducedIn == 5), hasLength(7));
     expect(library.sources.length, sourcePresets.length);
     expect(library.enabledSources, library.sources);
-    expect(library.sources.map((s) => s.url).toSet(), hasLength(9));
-    expect(library.sources.map((s) => s.name).toSet(), hasLength(9));
+    expect(library.sources.map((s) => s.url).toSet(), hasLength(16));
+    expect(library.sources.map((s) => s.name).toSet(), hasLength(16));
     expect(library.sources.any((s) => retiredSourcePresetUrls.contains(s.url)),
         false);
     expect(store.values['public_sources_initialized_v1'], true);
     expect(store.values['public_sources_initialized_v2'], true);
     expect(store.values['public_sources_initialized_v3'], true);
     expect(store.values['public_sources_initialized_v4'], true);
+    expect(store.values['public_sources_initialized_v5'], true);
     expect((await Library.open()).sources.length, sourcePresets.length);
     for (final preset in sourcePresets) {
       expect(SourceEndpoint.parseHttps(preset.source.url).scheme, 'https');
@@ -274,7 +275,7 @@ void main() {
     store.values['positions'] = '{"saved":1234}';
     store.values['downloads'] = '{"saved":"/local/video.mp4"}';
     var library = await Library.open();
-    expect(library.sources, hasLength(9));
+    expect(library.sources, hasLength(16));
     expect(library.sources.first.enabled, false);
     expect(library.sources.any((s) => s.name == '极速资源'), false);
     expect(library.sources.any((s) => retiredSourcePresetUrls.contains(s.url)),
@@ -287,7 +288,7 @@ void main() {
     expect(library.downloads['saved'], '/local/video.mp4');
     await library.removeSource(library.sources.last);
     library = await Library.open();
-    expect(library.sources, hasLength(8));
+    expect(library.sources, hasLength(15));
   });
 
   test('v1 empty configuration receives later presets once', () async {
@@ -322,11 +323,11 @@ void main() {
       },
     ]);
     final library = await Library.open();
-    expect(library.sources, hasLength(7));
+    expect(library.sources, hasLength(14));
     expect(library.sources.first.url, 'https://custom.example/api');
     expect(library.sources[1].name, 'custom alias');
     expect(library.sources.take(2).every((s) => !s.enabled), true);
-    expect((await Library.open()).sources, hasLength(7));
+    expect((await Library.open()).sources, hasLength(14));
   });
 
   test('v1 upgrade does not overwrite corrupt state or mark migration complete',
@@ -353,7 +354,7 @@ void main() {
     expect(store.values['sources'], previous);
     expect(store.values.containsKey('public_sources_initialized_v2'), false);
     store.failWrites = false;
-    expect((await Library.open()).sources, hasLength(7));
+    expect((await Library.open()).sources, hasLength(14));
   });
 
   test('v3 migration respects a deliberately empty v2 source list', () async {
@@ -374,12 +375,12 @@ void main() {
       {'name': 'custom', 'url': 'https://custom.example/api', 'enabled': false},
     ]);
     final library = await Library.open();
-    expect(library.sources, hasLength(4));
+    expect(library.sources, hasLength(11));
     expect(library.sources.take(2).every((source) => !source.enabled), true);
-    expect(library.sources.last.name, '无水印资源');
+    expect(library.sources.last.name, '快车资源');
     expect(library.sources.any((source) => source.name == '极速资源'), false);
     await library.removeSource(library.sources.last);
-    expect((await Library.open()).sources, hasLength(3));
+    expect((await Library.open()).sources, hasLength(10));
   });
 
   test('failed persistence does not change the source list', () async {

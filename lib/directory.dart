@@ -116,7 +116,7 @@ final _aiDramaThemePatterns = {
 List<String> get aiDramaThemeOptions => _aiDramaThemePatterns.keys.toList();
 
 List<String> aiDramaThemes(MediaEntry entry) {
-  if (catalogKind(entry.category) != 'AI漫剧') return const [];
+  if (catalogKind(entry.category) != 'AI短剧') return const [];
   final text = '${entry.title} ${entry.description}';
   return [
     for (final theme in _aiDramaThemePatterns.entries)
@@ -152,7 +152,7 @@ List<String> catalogGenreOptions(String label) =>
           '武侠'
         ],
       '动漫' => ['玄幻', '奇幻', '冒险', '动作', '搞笑', '恋爱', '校园', '热血', '动画'],
-      'AI漫剧' => aiDramaThemeOptions,
+      'AI短剧' => aiDramaThemeOptions,
       '综艺' => ['真人秀', '音乐', '脱口秀', '喜剧', '舞蹈', '访谈', '生活'],
       _ => [],
     };
@@ -166,6 +166,10 @@ class DirectoryFeed {
   bool loaded = false;
   final Map<String, String> issues = {};
   String? error;
+
+  /// Largest server-reported category size seen; estimates the unique
+  /// catalog depth because mirror sources report overlapping totals.
+  int totalHint = 0;
   List<MediaEntry> get entries => groups.map((g) => g.primary).toList();
 
   void _rebuild() {
@@ -205,9 +209,9 @@ List<CatalogCategory> directoryCategories(
   final roots = categories.where((c) =>
       c.name == label ||
       (label == '电视剧' && c.name == '连续剧') ||
-      (label == '短剧' && c.name == '爽文短剧') ||
+      (label == '短剧' && (c.name == '爽文短剧' || c.name == '反转爽剧')) ||
       (label == '动漫' && c.name == '动画') ||
-      (label == 'AI漫剧' && (c.name == '漫剧' || c.name.toUpperCase() == 'AI短剧')));
+      (label == 'AI短剧' && catalogKind(c.name) == 'AI短剧'));
   final included = <String, CatalogCategory>{};
   void include(CatalogCategory category) {
     if (included.containsKey(category.id)) return;
@@ -348,7 +352,7 @@ class DirectoryController extends ChangeNotifier {
 
   Future<void> ensureLabel(String label) async {
     label = directoryLabel(label);
-    if (label == '首页') return;
+    if (label == '首页' || label == '电视直播') return;
     _requested.add(label);
     if (!loadingCategories) await loadLabel(label);
   }
@@ -408,6 +412,7 @@ class DirectoryController extends ChangeNotifier {
       } else {
         partition.page = listing.page;
         partition.hasMore = listing.hasMore;
+        if (listing.total > feed.totalHint) feed.totalHint = listing.total;
         feed.issues.remove(key);
         final pages = feed._pages.putIfAbsent(partition.key, () => {});
         pages[partition.page] = listing.entries;

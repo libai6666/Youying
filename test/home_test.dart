@@ -675,19 +675,19 @@ void main() {
       (tester) async {
     await mount(tester,
         catalog: AiDramaCatalog(), library: previewLibrary()..history.clear());
-    await tester.ensureVisible(find.text('AI漫剧'));
-    await tester.tap(find.text('AI漫剧'));
+    await tester.ensureVisible(find.text('AI短剧'));
+    await tester.tap(find.text('AI短剧'));
     await tester.pumpAndSettle();
     expect(find.text('题材'), findsOneWidget);
     expect(find.text('题材按片名和简介推断，仅供参考'), findsOneWidget);
     for (final facet in ['地区', '语言', '年份', '类型']) {
       expect(find.text(facet), findsNothing);
     }
-    expect(find.byKey(const ValueKey('filter-AI漫剧-排序-好评')), findsNothing);
-    expect(find.byKey(const ValueKey('filter-AI漫剧-题材-冒险')), findsNothing);
+    expect(find.byKey(const ValueKey('filter-AI短剧-排序-好评')), findsNothing);
+    expect(find.byKey(const ValueKey('filter-AI短剧-题材-冒险')), findsNothing);
     expect(find.text('和闺蜜穿越落魄王府'), findsOneWidget);
     expect(find.text('天灾降临囤物资'), findsOneWidget);
-    final chip = find.byKey(const ValueKey('filter-AI漫剧-题材-末世'));
+    final chip = find.byKey(const ValueKey('filter-AI短剧-题材-末世'));
     await tester.ensureVisible(chip);
     await tester.tap(chip);
     await tester.pumpAndSettle();
@@ -758,10 +758,10 @@ void main() {
       'unsupported categories explain the gap instead of inventing content',
       (tester) async {
     await mount(tester);
-    await tester.ensureVisible(find.text('AI漫剧'));
-    await tester.tap(find.text('AI漫剧'));
+    await tester.ensureVisible(find.text('AI短剧'));
+    await tester.tap(find.text('AI短剧'));
     await tester.pumpAndSettle();
-    expect(find.text('已启用来源未提供“AI漫剧”分类'), findsOneWidget);
+    expect(find.text('已启用来源未提供“AI短剧”分类'), findsOneWidget);
   });
 
   for (final width in [320.0, 390.0]) {

@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'catalog.dart';
 import 'library.dart';
 
-const browseTabs = ['首页', '电影', '电视剧', '热门短剧', '二次元动漫', '综艺', 'AI漫剧', '电视直播'];
+const browseTabs = ['首页', '综艺', 'AI短剧', '电影', '电视剧', '二次元动漫', '热门短剧', '电视直播'];
 const rankingTabs = ['电视剧', '电影', '动漫', '综艺', '短剧'];
 
 class BrowseFeed {

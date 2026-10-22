@@ -294,9 +294,11 @@ class _HomePageState extends State<HomePage> {
       return _Feedback(
           message: browse.categoryError!, action: '重试', onTap: browse.refresh);
     }
+    if (label == '电视直播') {
+      return _LiveTv(library: widget.library);
+    }
     if (!browse.supports(label)) {
-      return _Feedback(
-          message: label == '电视直播' ? '当前为点播源，未接入电视直播' : '已启用来源未提供“$label”分类');
+      return _Feedback(message: '已启用来源未提供“$label”分类');
     }
     if (feed == null) {
       return _Feedback(
@@ -415,7 +417,7 @@ class _HomePageState extends State<HomePage> {
     final all = feed.rawEntries;
     final hot = all.any((e) => (e.popularity ?? 0) > 0);
     final rated = all.any((e) => e.rating != null);
-    final ai = directoryLabel(label) == 'AI漫剧';
+    final ai = directoryLabel(label) == 'AI短剧';
     void change(CatalogFilters next) =>
         setState(() => _catalogFilters[label] = next);
     List<String> options(Iterable<String> values) =>
@@ -472,7 +474,7 @@ class _HomePageState extends State<HomePage> {
                       '香港剧',
                       '短',
                       '短剧',
-                      'AI漫剧',
+                      'AI短剧',
                       '漫剧',
                       'AI短剧'
                     ].contains(g))
@@ -523,7 +525,9 @@ class _HomePageState extends State<HomePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     LocalizedText(
-                        '筛选当前已加载 ${feed.entries.length} 部 · 匹配 $count 部',
+                        feed.totalHint > feed.entries.length
+                            ? '已加载 ${feed.entries.length} 部 · 全库约 ${feed.totalHint} 部 · 匹配 $count 部'
+                            : '筛选当前已加载 ${feed.entries.length} 部 · 匹配 $count 部',
                         style: const TextStyle(fontSize: 11, color: _muted)),
                     const LocalizedText('继续上滑会加载更多内容；最新按来源更新时间，非小柚子同源片单。',
                         style: TextStyle(fontSize: 10, color: _muted)),
@@ -886,6 +890,104 @@ class _FeedLoading extends StatelessWidget {
               width: 20,
               height: 20,
               child: CircularProgressIndicator(strokeWidth: 2))));
+}
+
+class _LiveTv extends StatefulWidget {
+  const _LiveTv({required this.library});
+  final Library library;
+  @override
+  State<_LiveTv> createState() => _LiveTvState();
+}
+
+class _LiveTvState extends State<_LiveTv> {
+  late final LiveCatalog catalog = LiveCatalog()..load();
+  String group = '全部';
+
+  @override
+  void dispose() {
+    catalog.dispose();
+    super.dispose();
+  }
+
+  void _play(LiveChannel channel) {
+    final episodes = [
+      for (final item in catalog.channels)
+        Episode(name: item.name, url: item.url)
+    ];
+    final entry = MediaEntry(
+        id: 'live:mainland',
+        title: '电视直播',
+        source: channel.source,
+        category: '电视直播',
+        lines: {'直播': episodes});
+    Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) => PlayerPage(
+            entry: entry,
+            library: widget.library,
+            initial: episodes.firstWhere((item) => item.url == channel.url),
+            live: true)));
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+      animation: catalog,
+      builder: (context, _) {
+        if (catalog.loading && catalog.channels.isEmpty) {
+          return const _FeedLoading();
+        }
+        if (catalog.error != null) {
+          return _Feedback(
+              message: catalog.error!, action: '重试', onTap: catalog.load);
+        }
+        final groups = catalog.groups;
+        final visible = catalog.inGroup(group);
+        return Column(children: [
+          Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+              child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(spacing: 8, runSpacing: 4, children: [
+                    ChoiceChip(
+                        label: const LocalizedText('全部'),
+                        selected: group == '全部',
+                        showCheckmark: false,
+                        selectedColor: const Color(0xffffe3d6),
+                        side: BorderSide.none,
+                        onSelected: (_) => setState(() => group = '全部')),
+                    for (final name in groups)
+                      ChoiceChip(
+                          label: LocalizedText(name),
+                          selected: group == name,
+                          showCheckmark: false,
+                          selectedColor: const Color(0xffffe3d6),
+                          side: BorderSide.none,
+                          onSelected: (_) => setState(() => group = name)),
+                  ]))),
+          if (visible.isEmpty)
+            const Padding(
+                padding: EdgeInsets.all(32),
+                child: Center(child: LocalizedText('暂无直播频道'))),
+          for (final channel in visible)
+            ListTile(
+                dense: true,
+                leading: channel.logo.isEmpty
+                    ? const Icon(Icons.live_tv_outlined)
+                    : Image.network(channel.logo,
+                        width: 36,
+                        height: 36,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) =>
+                            const Icon(Icons.live_tv_outlined)),
+                title: Text(channel.name,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                subtitle: LocalizedText('${channel.group} · ${channel.source}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall),
+                trailing: const Icon(Icons.play_arrow, color: _orange),
+                onTap: () => _play(channel)),
+        ]);
+      });
 }
 
 class _Poster extends StatelessWidget {

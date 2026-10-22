@@ -195,7 +195,8 @@ internal class OfflineStore private constructor(private val context: Context) {
                 else -> "queued"
             }
             mapOf("id" to download.request.id, "entry" to metadata.getJSONObject("entry").toString(),
-                "episodeName" to metadata.getString("episodeName"), "url" to download.request.uri.toString(),
+                "episodeName" to metadata.getString("episodeName"),
+                "url" to metadata.optString("url").ifBlank { download.request.uri.toString() },
                 "state" to state, "bytes" to download.bytesDownloaded, "total" to download.contentLength,
                 "percent" to download.percentDownloaded.toDouble(),
                 "waitingForNetwork" to (manager.notMetRequirements != 0),
@@ -209,7 +210,12 @@ internal class OfflineStore private constructor(private val context: Context) {
             val url = map["url"] as String
             val uri = Uri.parse(url)
             require(uri.scheme == "https" && !uri.host.isNullOrEmpty() && uri.userInfo.isNullOrEmpty()) { "只支持 HTTPS 下载" }
-            val path = uri.path.orEmpty().lowercase()
+            val downloadUri = (map["downloadUrl"] as? String)?.let { candidate ->
+                Uri.parse(candidate).also { parsed ->
+                    require(parsed.scheme == "https" && !parsed.host.isNullOrEmpty() && parsed.userInfo.isNullOrEmpty()) { "只支持 HTTPS 下载" }
+                }
+            } ?: uri
+            val path = downloadUri.path.orEmpty().lowercase()
             val mime = when {
                 path.endsWith(".m3u8") || path.contains("/m3u8/") -> MimeTypes.APPLICATION_M3U8
                 path.endsWith(".mp4") -> MimeTypes.VIDEO_MP4
@@ -226,14 +232,18 @@ internal class OfflineStore private constructor(private val context: Context) {
                 require(!key.equals("Host", true) && !key.equals("Range", true) && !key.equals("Content-Length", true))
                 headers.put(key, value)
             }
-            val data = JSONObject().put("entry", entry).put("episodeName", name).put("headers", headers)
-            DownloadRequest.Builder(id, uri).setMimeType(mime).setData(data.toString().toByteArray()).build()
+            val data = JSONObject().put("entry", entry).put("episodeName", name).put("url", url).put("headers", headers)
+            DownloadRequest.Builder(id, downloadUri).setMimeType(mime).setData(data.toString().toByteArray()).build()
         }
         for (request in requests) {
             if (index.getDownload(request.id) != null || !pending.add(request.id)) continue
             try { DownloadService.sendAddDownload(context, OfflineDownloadService::class.java, request, true) }
             catch (error: Exception) { pending.remove(request.id); throw error }
         }
+    }
+
+    fun setAllStopReason(reason: Int) {
+        DownloadService.sendSetStopReason(context, OfflineDownloadService::class.java, null, reason, true)
     }
 
     fun command(method: String, id: String) {
@@ -307,6 +317,8 @@ class DownloadBridge(private val activity: Activity, messenger: BinaryMessenger)
                 }
                 "setParallelism" -> { store.setParallelism((data["value"] as Number).toInt()); result.success(store.snapshot()) }
                 "pause", "resume", "retry", "remove" -> { store.command(call.method, data["id"] as String); result.success(null) }
+                "pauseAll" -> { store.setAllStopReason(1); result.success(null) }
+                "resumeAll" -> { store.setAllStopReason(Download.STOP_REASON_NONE); result.success(null) }
                 else -> result.notImplemented()
             }
         } catch (error: Exception) {

@@ -46,6 +46,7 @@ const _english = <String, String>{
   '热门短剧': 'Short dramas',
   '短剧': 'Short dramas',
   'AI漫剧': 'AI animation',
+  'AI短剧': 'AI short dramas',
   '电视直播': 'Live TV',
   '全部': 'All',
   '请输入关键字': 'Search titles',
@@ -179,11 +180,17 @@ const _english = <String, String>{
   '取消续播': 'Cancel auto-play',
   '退出全屏': 'Exit fullscreen',
   '切换线路': 'Change line',
+  '清晰度': 'Quality',
+  '自动': 'Auto',
+  '无法切换清晰度': 'Could not switch quality',
   '仅一条线路': 'Only one line',
   '选集': 'Episodes',
   '下载剧集': 'Download episodes',
   '详情介绍': 'Details',
   '播放下一集': 'Next episode',
+  '播放上一集': 'Previous episode',
+  '上一个频道': 'Previous channel',
+  '下一个频道': 'Next channel',
   '倍速': 'Speed',
   '全屏': 'Fullscreen',
   '返回原资源': 'Return to original title',
@@ -206,6 +213,10 @@ const _english = <String, String>{
   '原资源': 'Original title',
   '离线播放': 'Play offline',
   '继续': 'Resume',
+  '全部暂停': 'Pause all',
+  '全部继续': 'Resume all',
+  '全部删除': 'Delete all',
+  '删除全部下载？': 'Delete all downloads?',
   '取消全选': 'Deselect all',
   '全选': 'Select all',
   '下载剧集排序': 'Download order',
@@ -390,6 +401,13 @@ String uiText(BuildContext context, String value) {
         .replaceFirst(' 部 · 匹配 ', ' titles · matching ')
         .replaceFirst(' 部', ' titles');
   }
+  if (value.startsWith('已加载 ')) {
+    return value
+        .replaceFirst('已加载 ', 'Loaded ')
+        .replaceFirst(' 部 · 全库约 ', ' titles · ~')
+        .replaceFirst(' 部 · 匹配 ', ' in catalog · matching ')
+        .replaceFirst(' 部', ' titles');
+  }
   if (value.startsWith('找到 ') || value.startsWith('已搜索 ')) {
     return value
         .replaceAll('找到 ', 'Found ')
@@ -436,6 +454,9 @@ final _rules = <(RegExp, String Function(RegExpMatch))>[
     (m) => '${m[1]}: request failed or unsupported response'
   ),
   (RegExp(r'^已找到 (\d+) 个版本$'), (m) => '${m[1]} versions found'),
+  (
+    RegExp(r'^共 (\d+) 项任务\n同时移除已缓存的离线内容。$'),
+    (m) => '${m[1]} tasks · Cached offline content will also be removed.'),
   (
     RegExp(r'^已找到 (\d+) 个版本，(\d+) 个来源暂不可用$'),
     (m) => '${m[1]} versions found · ${m[2]} sources unavailable'

@@ -14,12 +14,14 @@ class DownloadEpisodeSheet extends StatefulWidget {
       required this.episodes,
       required this.library,
       this.current,
-      this.headers = const {}});
+      this.headers = const {},
+      this.resolveDownloadUrl});
   final MediaEntry entry;
   final List<Episode> episodes;
   final Library library;
   final Episode? current;
   final Map<String, String> headers;
+  final Future<String?> Function(Episode episode)? resolveDownloadUrl;
   @override
   State<DownloadEpisodeSheet> createState() => _DownloadEpisodeSheetState();
 }
@@ -62,8 +64,16 @@ class _DownloadEpisodeSheetState extends State<DownloadEpisodeSheet> {
       message = null;
     });
     try {
-      await widget.library.offline
-          .enqueue(widget.entry, targets, headers: widget.headers);
+      final downloadUrls = <String, String>{};
+      final resolver = widget.resolveDownloadUrl;
+      if (resolver != null) {
+        for (final target in targets) {
+          final resolved = await resolver(target);
+          if (resolved != null) downloadUrls[target.url] = resolved;
+        }
+      }
+      await widget.library.offline.enqueue(widget.entry, targets,
+          headers: widget.headers, downloadUrls: downloadUrls);
       if (mounted) {
         setState(() {
           selected.clear();
@@ -252,6 +262,7 @@ class DownloadsView extends StatefulWidget {
 class _DownloadsViewState extends State<DownloadsView> {
   late int filter;
   final Set<String> busy = {};
+  bool _bulkBusy = false;
   @override
   void initState() {
     super.initState();
@@ -287,6 +298,72 @@ class _DownloadsViewState extends State<DownloadsView> {
       }
     } finally {
       if (mounted) setState(() => busy.remove(task.id));
+    }
+  }
+
+  Future<void> _bulk(String action) async {
+    if (_bulkBusy) return;
+    setState(() => _bulkBusy = true);
+    try {
+      final offline = widget.library.offline;
+      if (widget.groupId == null) {
+        if (action == 'pause') {
+          await offline.pauseAll();
+        } else {
+          await offline.resumeAll();
+        }
+      } else {
+        final group = groupDownloads(offline.tasks)
+            .where((item) => item.id == widget.groupId)
+            .firstOrNull;
+        for (final task in group?.tasks ?? const <DownloadTask>[]) {
+          if (action == 'pause' && task.active) {
+            await offline.action('pause', task);
+          } else if (action == 'resume' && task.state == 'paused') {
+            await offline.action('resume', task);
+          } else if (action == 'remove') {
+            await offline.action('remove', task);
+          }
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: LocalizedText('下载任务操作失败，请重试')));
+      }
+    } finally {
+      if (mounted) setState(() => _bulkBusy = false);
+    }
+  }
+
+  Future<void> _removeAll(List<DownloadTask> scoped) async {
+    final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+                title: const LocalizedText('删除全部下载？'),
+                content: LocalizedText(
+                    '共 ${scoped.length} 项任务\n同时移除已缓存的离线内容。'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const LocalizedText('取消')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const LocalizedText('删除'))
+                ]));
+    if (confirmed != true || !mounted) return;
+    setState(() => _bulkBusy = true);
+    try {
+      for (final task in scoped) {
+        await widget.library.offline.action('remove', task);
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: LocalizedText('下载任务操作失败，请重试')));
+      }
+    } finally {
+      if (mounted) setState(() => _bulkBusy = false);
     }
   }
 
@@ -330,20 +407,48 @@ class _DownloadsViewState extends State<DownloadsView> {
         final showLegacy = widget.groupId == null &&
             filter != 1 &&
             widget.library.downloads.isNotEmpty;
+        final scopedTasks = widget.groupId == null
+            ? widget.library.offline.tasks
+            : groups.expand((group) => group.tasks).toList();
+        final activeCount =
+            scopedTasks.where((task) => task.active).length;
+        final pausedCount =
+            scopedTasks.where((task) => task.state == 'paused').length;
         return Column(children: [
           Padding(
               padding: const EdgeInsets.all(12),
-              child: Wrap(spacing: 8, runSpacing: 4, children: [
-                for (final (index, title) in [
-                  (0, '全部'),
-                  (1, '正在下载'),
-                  (2, '已完成')
-                ])
-                  ChoiceChip(
-                      label: LocalizedText(title),
-                      selected: filter == index,
-                      onSelected: (_) => setState(() => filter = index)),
-              ])),
+              child: Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    for (final (index, title) in [
+                      (0, '全部'),
+                      (1, '正在下载'),
+                      (2, '已完成')
+                    ])
+                      ChoiceChip(
+                          label: LocalizedText(title),
+                          selected: filter == index,
+                          onSelected: (_) => setState(() => filter = index)),
+                    if (activeCount > 0)
+                      TextButton.icon(
+                          onPressed: _bulkBusy ? null : () => _bulk('pause'),
+                          icon: const Icon(Icons.pause, size: 18),
+                          label: const LocalizedText('全部暂停')),
+                    if (pausedCount > 0)
+                      TextButton.icon(
+                          onPressed: _bulkBusy ? null : () => _bulk('resume'),
+                          icon: const Icon(Icons.play_arrow, size: 18),
+                          label: const LocalizedText('全部继续')),
+                    if (scopedTasks.isNotEmpty)
+                      TextButton.icon(
+                          onPressed: _bulkBusy
+                              ? null
+                              : () => _removeAll(scopedTasks),
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          label: const LocalizedText('全部删除')),
+                  ])),
           Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: LocalizedText(

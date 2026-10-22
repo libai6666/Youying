@@ -10,7 +10,9 @@ import 'catalog.dart';
 import 'directory.dart';
 import 'download_widgets.dart';
 import 'library.dart';
+import 'live.dart';
 import 'player.dart';
+import 'quality.dart';
 import 'source_presets.dart';
 import 'ui_locale.dart';
 
@@ -454,7 +456,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
                     '动漫',
                     '综艺',
                     '短剧',
-                    'AI漫剧'
+                    'AI短剧'
                   ])
                     Padding(
                         padding: const EdgeInsets.only(right: 6),
@@ -576,6 +578,8 @@ class _DetailPageState extends State<DetailPage> {
   bool loading = false;
   String? error;
   final Map<String, MediaEntry> _choices = {};
+  final Map<String, int?> _sourceHeights = {};
+  bool _manualSourcePick = false;
   int _generation = 0;
   bool findingSources = false;
   String? sourceStatus;
@@ -594,6 +598,29 @@ class _DetailPageState extends State<DetailPage> {
       _choices[candidate.id] = candidate;
     }
     _load();
+    unawaited(_probeHeights());
+  }
+
+  Future<void> _probeHeights() async {
+    final pending = [
+      for (final choice in _choices.values)
+        if (!_sourceHeights.containsKey(choice.id)) choice,
+    ];
+    if (pending.isEmpty) return;
+    final generation = _generation;
+    try {
+      final heights = await probeEntryHeights(pending);
+      if (!mounted || generation != _generation) return;
+      setState(() => _sourceHeights.addAll(heights));
+      _maybeUpgradeSource();
+    } catch (_) {}
+  }
+
+  void _maybeUpgradeSource() {
+    if (_manualSourcePick) return;
+    final best =
+        highestHeightChoice(_choices.values, _sourceHeights, entry.id);
+    if (best != null) _switchSource(best);
   }
 
   void _preparePlayback(MediaEntry next) {
@@ -659,6 +686,7 @@ class _DetailPageState extends State<DetailPage> {
       sourceStatus =
           '已找到 ${_choices.length} 个版本${failed > 0 ? '，$failed 个来源暂不可用' : ''}';
     });
+    unawaited(_probeHeights());
   }
 
   Future<void> _pickSource() async {
@@ -670,7 +698,11 @@ class _DetailPageState extends State<DetailPage> {
               for (final choice in _choices.values)
                 ListTile(
                     title: Text(choice.source),
-                    subtitle: Text(choice.title),
+                    subtitle: Text([
+                      choice.title,
+                      if ((_sourceHeights[choice.id] ?? 0) > 0)
+                        '${_sourceHeights[choice.id]}p'
+                    ].join(' · ')),
                     trailing: choice.id == entry.id
                         ? const Icon(Icons.check, color: _orange)
                         : null,
@@ -683,7 +715,10 @@ class _DetailPageState extends State<DetailPage> {
                     _findSources();
                   }),
             ])));
-    if (mounted && next != null) _switchSource(next);
+    if (mounted && next != null) {
+      _manualSourcePick = true;
+      _switchSource(next);
+    }
   }
 
   Future<void> _showDescription() => showModalBottomSheet<void>(
@@ -739,6 +774,7 @@ class _DetailPageState extends State<DetailPage> {
           _sourceBeforeSwitch = null;
           _choices[full.id] = full;
         });
+        unawaited(_probeHeights());
       }
     } catch (_) {
       if (mounted && generation == _generation) {
@@ -855,9 +891,13 @@ class _DetailPageState extends State<DetailPage> {
           Wrap(spacing: 6, runSpacing: 6, children: [
             for (final candidate in _choices.values)
               ChoiceChip(
-                  label: Text(candidate.source),
+                  label: Text(
+                      '${candidate.source}${(_sourceHeights[candidate.id] ?? 0) > 0 ? ' · ${_sourceHeights[candidate.id]}p' : ''}'),
                   selected: candidate.id == entry.id,
-                  onSelected: (_) => _switchSource(candidate)),
+                  onSelected: (_) {
+                    _manualSourcePick = true;
+                    _switchSource(candidate);
+                  }),
             ActionChip(
                 label: LocalizedText(findingSources ? '正在匹配…' : '查找更多播放源'),
                 onPressed: findingSources ? null : _findSources),

@@ -46,11 +46,14 @@ class CatalogClient {
     }
     final index = () async {
       final entries = <MediaEntry>[];
+      final seen = <String>{};
       for (final category in categories) {
         for (var page = 1; page <= 50; page++) {
           final listing =
               await browse(source, categoryId: category, page: page);
-          entries.addAll(listing.entries);
+          for (final entry in listing.entries) {
+            if (seen.add(entry.id)) entries.add(entry);
+          }
           if (!listing.hasMore) break;
         }
       }
@@ -293,6 +296,23 @@ class Library extends ChangeNotifier {
       await _preferences.setString('sources',
           jsonEncode(merged.map((source) => source.toJson()).toList()));
       await _preferences.setBool('public_sources_initialized_v4', true);
+      sources = merged;
+    }
+    if (validSources &&
+        await _preferences.getBool('public_sources_initialized_v5') != true) {
+      final merged = List<SourceEndpoint>.of(sources);
+      for (final preset in sources.isEmpty
+          ? <SourcePreset>[]
+          : sourcePresets.where((p) => p.introducedIn == 5)) {
+        if (!merged.any((source) =>
+            source.name == preset.source.name ||
+            source.url == preset.source.url)) {
+          merged.add(preset.source);
+        }
+      }
+      await _preferences.setString('sources',
+          jsonEncode(merged.map((source) => source.toJson()).toList()));
+      await _preferences.setBool('public_sources_initialized_v5', true);
       sources = merged;
     }
     for (final (text, output) in [
@@ -541,6 +561,7 @@ class Library extends ChangeNotifier {
     String id, {
     Map<String, String> headers = const {},
     void Function(int received, int? total)? onProgress,
+    String? address,
   }) async {
     final key = episodeKey(id, episode);
     if (!_activeDownloads.add(key)) {
@@ -554,7 +575,7 @@ class Library extends ChangeNotifier {
       if (existing != null && await File(existing).exists()) return existing;
       final downloader = MediaDownloader();
       try {
-        final path = await downloader.download(episode.url, destination,
+        final path = await downloader.download(address ?? episode.url, destination,
             headers: headers, onProgress: onProgress);
         final next = {...downloads, key: path};
         await _preferences.setString('downloads', jsonEncode(next));

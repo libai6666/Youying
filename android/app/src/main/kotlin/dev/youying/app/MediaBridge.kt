@@ -5,12 +5,15 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -84,8 +87,28 @@ class MediaBridge(
         sink?.success(mapOf("playerId" to id, "type" to type, "value" to value))
     }
 
+    private fun emitTracks(id: Long, player: ExoPlayer) {
+        val tracks = mutableListOf<Map<String, Any>>()
+        player.currentTracks.groups.forEachIndexed { groupIndex, group ->
+            if (group.type != C.TRACK_TYPE_VIDEO) return@forEachIndexed
+            for (trackIndex in 0 until group.length) {
+                if (!group.isTrackSupported(trackIndex)) continue
+                val format = group.getTrackFormat(trackIndex)
+                tracks.add(mapOf(
+                    "groupIndex" to groupIndex,
+                    "trackIndex" to trackIndex,
+                    "width" to format.width.coerceAtLeast(0),
+                    "height" to format.height.coerceAtLeast(0),
+                    "bitrate" to format.bitrate.coerceAtLeast(0),
+                    "selected" to group.isTrackSelected(trackIndex),
+                ))
+            }
+        }
+        notify(id, "tracks", tracks)
+    }
+
     private fun makePlayer(id: Long): ExoPlayer = players.getOrPut(id) {
-        ExoPlayer.Builder(context).build().also { player ->
+        ExoPlayer.Builder(context).setTrackSelector(DefaultTrackSelector(context)).build().also { player ->
             player.addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     notify(id, "playing", isPlaying)
@@ -95,6 +118,10 @@ class MediaBridge(
                     notify(id, "buffering", state == Player.STATE_BUFFERING)
                     if (state == Player.STATE_READY) notify(id, "loaded", true)
                     if (state == Player.STATE_ENDED) notify(id, "completed", true)
+                }
+
+                override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                    emitTracks(id, player)
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
@@ -175,6 +202,22 @@ class MediaBridge(
                     require(rate.isFinite() && rate > 0f) { "Invalid rate" }
                     player.setPlaybackSpeed(rate)
                     notify(id, "rate", rate)
+                }
+                "setTrack" -> {
+                    val groupIndex = (data["groupIndex"] as? Number)?.toInt() ?: -1
+                    val trackIndex = (data["trackIndex"] as? Number)?.toInt() ?: -1
+                    val builder = player.trackSelectionParameters.buildUpon()
+                    if (groupIndex < 0) {
+                        player.trackSelectionParameters =
+                            builder.clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
+                    } else {
+                        val group = player.currentTracks.groups.getOrNull(groupIndex)
+                        require(group != null && group.type == C.TRACK_TYPE_VIDEO &&
+                            trackIndex >= 0 && trackIndex < group.length) { "Invalid track" }
+                        player.trackSelectionParameters = builder.setOverrideForType(
+                            TrackSelectionOverride(group.mediaTrackGroup, trackIndex)).build()
+                    }
+                    emitTracks(id, player)
                 }
                 "setBoxFit" -> {
                     val mode = if (data["fit"] == "cover") AspectRatioFrameLayout.RESIZE_MODE_ZOOM

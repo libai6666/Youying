@@ -4,10 +4,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Cleartext is enabled at OS level only for live IPTV streams, whose
+         public carrier relays offer no TLS. Dart-side checks still require
+         HTTPS for every VOD playback and download URL. -->
     <application
         android:label="${appLabel}"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
         <service android:name=".OfflineDownloadService" android:exported="false"
             android:foregroundServiceType="dataSync">
             <intent-filter>

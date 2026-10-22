@@ -79,6 +79,9 @@ void main() {
             home: HomePage(library: library, browseClient: client),
           ));
           await tester.pumpAndSettle();
+          await tester
+              .ensureVisible(find.text(locale == 'en' ? 'Movies' : '电影'));
+          await tester.pumpAndSettle();
           await tester.tap(find.text(locale == 'en' ? 'Movies' : '电影'));
           await tester.pumpAndSettle();
           final positions = [

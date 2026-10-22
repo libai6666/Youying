@@ -292,7 +292,7 @@ void main() {
     }
     expect(directory.supports('电影'), isTrue);
     expect(feed.entries, isNotEmpty);
-    expect(directory.supports('AI漫剧'), isFalse);
+    expect(directory.supports('AI短剧'), isFalse);
   });
 
   test(
@@ -471,21 +471,24 @@ void main() {
   });
 
   test('AI short dramas join the AI tab and use inferred themes', () {
-    expect(catalogKind('AI短剧'), 'AI漫剧');
-    expect(catalogKind('ai短剧'), 'AI漫剧');
-    expect(catalogKind('漫剧'), 'AI漫剧');
+    expect(catalogKind('AI短剧'), 'AI短剧');
+    expect(catalogKind('ai短剧'), 'AI短剧');
+    expect(catalogKind('漫剧'), 'AI短剧');
+    expect(catalogKind('AI漫剧'), 'AI短剧');
+    expect(catalogKind('动漫剧场'), isNot('AI短剧'));
     expect(catalogKind('爽文短剧'), '短剧');
+    expect(catalogKind('反转爽剧'), '短剧');
     expect(catalogKind('擦边短剧'), '短剧');
     expect(
         directoryCategories(const [
           CatalogCategory('54', 'AI漫剧'),
           CatalogCategory('55', 'AI短剧'),
           CatalogCategory('38', '短剧'),
-        ], 'AI漫剧')
+        ], 'AI短剧')
             .map((c) => c.id),
         ['54', '55']);
-    expect(catalogGenreOptions('AI漫剧'), containsAll(['穿越', '甜宠', '玄幻仙侠']));
-    expect(catalogGenreOptions('AI漫剧'), isNot(contains('冒险')));
+    expect(catalogGenreOptions('AI短剧'), containsAll(['穿越', '甜宠', '玄幻仙侠']));
+    expect(catalogGenreOptions('AI短剧'), isNot(contains('冒险')));
     expect(catalogGenreOptions('动漫'), contains('冒险'));
 
     const ai = MediaEntry(
@@ -507,10 +510,13 @@ void main() {
   test('漫剧 roots join the AI tab while 擦边短剧 stays out of 短剧', () {
     const categories = [
       CatalogCategory('54', '爽文短剧'),
+      CatalogCategory('65', '反转爽剧'),
       CatalogCategory('73', '擦边短剧'),
       CatalogCategory('76', '漫剧'),
     ];
-    expect(directoryCategories(categories, 'AI漫剧').map((c) => c.id), ['76']);
-    expect(directoryCategories(categories, '热门短剧').map((c) => c.id), ['54']);
+    expect(directoryCategories(categories, 'AI短剧').map((c) => c.id), ['76']);
+    expect(
+        directoryCategories(categories, '热门短剧').map((c) => c.id),
+        ['54', '65']);
   });
 }

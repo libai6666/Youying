@@ -5,11 +5,53 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'catalog.dart';
+import 'quality.dart';
 import 'ui_locale.dart';
 import 'download_widgets.dart';
 import 'library.dart';
 
 final ValueNotifier<bool> playerFullscreenViewport = ValueNotifier(false);
+
+/// A selectable video rendition reported by the native player.
+class VideoTrack {
+  const VideoTrack(
+      {required this.groupIndex,
+      required this.trackIndex,
+      this.width = 0,
+      this.height = 0,
+      this.bitrate = 0,
+      this.selected = false});
+  final int groupIndex;
+  final int trackIndex;
+  final int width;
+  final int height;
+  final int bitrate;
+  final bool selected;
+
+  String get label => height > 0
+      ? '${height}p'
+      : bitrate > 0
+          ? '${(bitrate / 1000000).toStringAsFixed(1)}Mbps'
+          : '默认';
+
+  static List<VideoTrack> parse(Object? value) {
+    if (value is! List) return const [];
+    final tracks = <VideoTrack>[];
+    for (final item in value) {
+      if (item is! Map) continue;
+      int num0(String key) => (item[key] as num?)?.toInt() ?? 0;
+      tracks.add(VideoTrack(
+          groupIndex: num0('groupIndex'),
+          trackIndex: num0('trackIndex'),
+          width: num0('width'),
+          height: num0('height'),
+          bitrate: num0('bitrate'),
+          selected: item['selected'] == true));
+    }
+    tracks.sort((a, b) => b.height.compareTo(a.height));
+    return tracks;
+  }
+}
 
 Episode? nextEpisodeOnLine(
     Map<String, List<Episode>> lines, String? line, Episode? current) {
@@ -17,6 +59,14 @@ Episode? nextEpisodeOnLine(
   if (episodes == null || current == null) return null;
   final index = episodes.indexWhere((item) => item.url == current.url);
   return index >= 0 && index + 1 < episodes.length ? episodes[index + 1] : null;
+}
+
+Episode? previousEpisodeOnLine(
+    Map<String, List<Episode>> lines, String? line, Episode? current) {
+  final episodes = lines[line];
+  if (episodes == null || current == null) return null;
+  final index = episodes.indexWhere((item) => item.url == current.url);
+  return index > 0 ? episodes[index - 1] : null;
 }
 
 int scrubPositionMs(int startMs, double distance, int durationMs) =>
@@ -48,12 +98,15 @@ class MediaController {
   }
 
   Future<void> open(String url,
-      {int startMs = 0, Map<String, String> headers = const {}}) async {
+      {int startMs = 0,
+      Map<String, String> headers = const {},
+      bool allowCleartext = false}) async {
     final parsed = Uri.tryParse(url);
     if (parsed == null ||
-        parsed.scheme != 'https' ||
         parsed.host.isEmpty ||
-        parsed.userInfo.isNotEmpty) {
+        parsed.userInfo.isNotEmpty ||
+        (parsed.scheme != 'https' &&
+            !(allowCleartext && parsed.scheme == 'http'))) {
       throw const FormatException('只播放 HTTPS 媒体或已下载文件');
     }
     await call('open',
@@ -68,6 +121,10 @@ class MediaController {
   Future<void> play() => call('play');
   Future<void> seek(int ms) => call('seek', {'positionMs': ms});
   Future<void> setRate(double rate) => call('setRate', {'rate': rate});
+  Future<void> setTrack(VideoTrack? track) => call('setTrack', {
+        'groupIndex': track?.groupIndex ?? -1,
+        'trackIndex': track?.trackIndex ?? -1
+      });
   Future<void> dispose() => call('dispose');
 
   Widget videoView() => AndroidView(
@@ -91,7 +148,8 @@ class PlayerPage extends StatefulWidget {
       this.onChooseSource,
       this.onShowDetails,
       this.onPlaybackChanged,
-      this.headers = const {}});
+      this.headers = const {},
+      this.live = false});
   final MediaEntry entry;
   final Library library;
   final Episode? initial;
@@ -104,6 +162,10 @@ class PlayerPage extends StatefulWidget {
   final VoidCallback? onShowDetails;
   final void Function(Episode episode, int positionMs)? onPlaybackChanged;
   final Map<String, String> headers;
+
+  /// Live streams have no meaningful progress to persist and cannot be
+  /// downloaded for offline playback.
+  final bool live;
 
   @override
   State<PlayerPage> createState() => _PlayerPageState();
@@ -140,6 +202,8 @@ class _PlayerPageState extends State<PlayerPage> {
   double _holdStartX = 0;
   int _holdStartMs = 0;
   int? _scrubMs;
+  List<VideoTrack> videoTracks = const [];
+  VideoTrack? _manualTrack;
 
   void _refresh() {
     if (!mounted) return;
@@ -188,7 +252,7 @@ class _PlayerPageState extends State<PlayerPage> {
     }
     if (identical(oldWidget.entry, widget.entry)) return;
     _cancelAutoNext();
-    if (episode != null && positionMs > 0) {
+    if (episode != null && positionMs > 0 && !oldWidget.live) {
       unawaited(oldWidget.library
           .recordPlay(oldWidget.originalEntry ?? oldWidget.entry,
               episode: episode,
@@ -281,8 +345,27 @@ class _PlayerPageState extends State<PlayerPage> {
           final value = event['value'];
           if (value is num) durationMs = value.toInt();
           if (_completed && durationMs > 0) positionMs = durationMs;
+        case 'tracks':
+          final parsed = VideoTrack.parse(event['value']);
+          videoTracks = parsed;
+          final manual = _manualTrack;
+          if (manual != null &&
+              !parsed.any((track) =>
+                  track.groupIndex == manual.groupIndex &&
+                  track.trackIndex == manual.trackIndex)) {
+            _manualTrack = null;
+          }
         case 'error':
-          error = '播放失败，请检查地址、格式和网络';
+          // Public IPTV streams die often: auto-zap to the next channel
+          // instead of leaving the user on an error screen. Capped.
+          if (widget.live &&
+              !selecting &&
+              episode != null &&
+              ++_liveFailStreak < 6) {
+            _switchChannel(1);
+          } else {
+            error = '播放失败，请检查地址、格式和网络';
+          }
       }
     });
     if (event['type'] == 'duration' && _checkingResume && durationMs > 0) {
@@ -296,6 +379,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (event['type'] == 'error') _cancelAutoNext();
     _repaintFullscreen.value++;
     if (event['type'] == 'playing') {
+      _liveFailStreak = 0;
       if (!playing && _holdActive) _holdEnd(commit: false);
       if (!playing && !selecting) unawaited(_saveProgress());
       _showControls();
@@ -313,6 +397,7 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   Future<void> _saveProgress() async {
+    if (widget.live) return;
     _lastSavedPositionMs = positionMs;
     try {
       await widget.library.recordPlay(widget.originalEntry ?? widget.entry,
@@ -432,6 +517,8 @@ class _PlayerPageState extends State<PlayerPage> {
       }
       _lastSavedPositionMs = 0;
       _scrubMs = null;
+      videoTracks = const [];
+      _manualTrack = null;
     });
     _requestedStartMs = _restoringCompleted && durationMs > 0
         ? durationMs
@@ -451,15 +538,38 @@ class _PlayerPageState extends State<PlayerPage> {
         }
       } else {
         await controller.open(next.url,
-            startMs: _requestedStartMs, headers: widget.headers);
+            startMs: _requestedStartMs,
+            headers: widget.headers,
+            allowCleartext: widget.live);
       }
+      _liveFailStreak = 0;
       try {
-        await widget.library
-            .recordPlay(widget.originalEntry ?? widget.entry, episode: next);
+        if (!widget.live) {
+          await widget.library
+              .recordPlay(widget.originalEntry ?? widget.entry, episode: next);
+        }
       } catch (_) {}
     } catch (_) {
-      if (mounted) setState(() => error = '播放地址不可用');
+      if (!mounted) return;
+      // Public IPTV streams die often: hop to the next channel instead of
+      // leaving the user on an error screen. Capped to avoid endless zapping.
+      if (widget.live && ++_liveFailStreak < 6) {
+        _switchChannel(1);
+      } else {
+        setState(() => error = '播放地址不可用');
+      }
     }
+  }
+
+  int _liveFailStreak = 0;
+
+  Future<String?> _resolveDownloadUrl(Episode target) {
+    final selected = _manualTrack;
+    if (selected == null || target.url != episode?.url) {
+      return Future.value();
+    }
+    return variantUrlForHeight(target.url, selected.height,
+        headers: widget.headers);
   }
 
   Future<void> _download() async {
@@ -475,7 +585,8 @@ class _PlayerPageState extends State<PlayerPage> {
             episodes: widget.entry.lines[line] ?? const [],
             current: episode,
             library: widget.library,
-            headers: widget.headers));
+            headers: widget.headers,
+            resolveDownloadUrl: _resolveDownloadUrl));
     if (viewDownloads != true || !mounted) return;
     final resume = playing;
     if (resume) await controller.pause();
@@ -565,6 +676,18 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
+  Future<void> _changeQuality(VideoTrack? track) async {
+    try {
+      await controller.setTrack(track);
+      if (mounted) {
+        setState(() => _manualTrack = track);
+        _repaintFullscreen.value++;
+      }
+    } catch (_) {
+      if (mounted) setState(() => error = '无法切换清晰度');
+    }
+  }
+
   Future<void> _togglePlayback() async {
     _cancelAutoNext();
     try {
@@ -598,7 +721,17 @@ class _PlayerPageState extends State<PlayerPage> {
     if (ready) unawaited(_select(target, startMs: startMs));
   }
 
-  void _tapVideo() {
+  void _tapVideo(TapUpDetails details, double width) {
+    if (widget.live && episode != null && !selecting) {
+      if (details.localPosition.dx < width * 0.25) {
+        _switchChannel(-1);
+        return;
+      }
+      if (details.localPosition.dx > width * 0.75) {
+        _switchChannel(1);
+        return;
+      }
+    }
     if (_controlsVisible) {
       _controlsTimer?.cancel();
       _controlsVisible = false;
@@ -608,7 +741,19 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
+  /// Live channel zap: cycles through the channel list (episodes of the
+  /// '直播' line) with wrap-around. Only reached in live mode.
+  void _switchChannel(int delta) {
+    final episodes = widget.entry.lines[line];
+    if (episodes == null || episodes.length < 2 || episode == null) return;
+    final index = episodes.indexWhere((item) => item.url == episode!.url);
+    if (index < 0) return;
+    unawaited(_select(
+        episodes[(index + delta + episodes.length) % episodes.length]));
+  }
+
   void _holdStart(LongPressStartDetails details, double width) {
+    if (widget.live) return;
     _holdActive = true;
     _holdStartX = details.localPosition.dx;
     _holdStartMs = positionMs;
@@ -708,7 +853,7 @@ class _PlayerPageState extends State<PlayerPage> {
         if (ready) controller.videoView(),
         GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: _tapVideo,
+          onTapUp: (details) => _tapVideo(details, constraints.maxWidth),
           onLongPressStart: (details) =>
               _holdStart(details, constraints.maxWidth),
           onLongPressMoveUpdate: _holdMove,
@@ -824,7 +969,7 @@ class _PlayerPageState extends State<PlayerPage> {
                             : Icons.star_outline,
                         () => widget.library.toggleFavorite(widget.entry))),
                 _overlayButton('下载剧集', Icons.download_outlined,
-                    episode == null ? null : _download),
+                    episode == null || widget.live ? null : _download),
                 if (widget.onShowDetails != null)
                   _overlayButton('详情介绍', Icons.info_outline,
                       () => unawaited(_showDetails())),
@@ -843,6 +988,7 @@ class _PlayerPageState extends State<PlayerPage> {
                       colors: [Colors.transparent, Colors.black87]),
                 ),
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  if (!widget.live)
                   SizedBox(
                     height: 26,
                     child: SliderTheme(
@@ -873,6 +1019,22 @@ class _PlayerPageState extends State<PlayerPage> {
                   ),
                   Row(children: [
                     _overlayButton(
+                        widget.live ? '上一个频道' : '播放上一集',
+                        Icons.skip_previous,
+                        ready &&
+                                !selecting &&
+                                (widget.live
+                                    ? (lines[line]?.length ?? 0) > 1
+                                    : previousEpisodeOnLine(
+                                            lines, line, episode) !=
+                                        null)
+                            ? () => widget.live
+                                ? _switchChannel(-1)
+                                : unawaited(_select(
+                                    previousEpisodeOnLine(lines, line, episode),
+                                    startMs: 0))
+                            : null),
+                    _overlayButton(
                         playing ? '暂停' : (_completed ? '重播' : '播放'),
                         playing ? Icons.pause : Icons.play_arrow,
                         ready ? () => unawaited(_togglePlayback()) : null),
@@ -880,16 +1042,70 @@ class _PlayerPageState extends State<PlayerPage> {
                         child: FittedBox(
                             fit: BoxFit.scaleDown,
                             alignment: Alignment.centerLeft,
-                            child: LocalizedText(
-                                '${_time(progress)} / ${_time(durationMs)}',
-                                style: const TextStyle(
-                                    color: Colors.white, fontSize: 11)))),
+                            child: widget.live
+                                ? const Row(mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                        Icon(Icons.circle,
+                                            size: 8, color: Colors.redAccent),
+                                        SizedBox(width: 4),
+                                        LocalizedText('直播',
+                                            style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 11)),
+                                      ])
+                                : LocalizedText(
+                                    '${_time(progress)} / ${_time(durationMs)}',
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11)))),
                     _overlayButton(
-                        '播放下一集',
+                        widget.live ? '下一个频道' : '播放下一集',
                         Icons.skip_next,
-                        ready && !selecting && next != null
-                            ? () => unawaited(_select(next, startMs: 0))
+                        ready &&
+                                !selecting &&
+                                (widget.live
+                                    ? (lines[line]?.length ?? 0) > 1
+                                    : next != null)
+                            ? () => widget.live
+                                ? _switchChannel(1)
+                                : unawaited(_select(next, startMs: 0))
                             : null),
+                    if (videoTracks.isNotEmpty)
+                      PopupMenuButton<Object?>(
+                        tooltip: uiText(context, '清晰度'),
+                        enabled: ready && !selecting,
+                        onSelected: (value) => unawaited(
+                            _changeQuality(value is VideoTrack ? value : null)),
+                        itemBuilder: (_) => [
+                          CheckedPopupMenuItem(
+                              value: 'auto',
+                              checked: _manualTrack == null,
+                              child: const LocalizedText('自动')),
+                          for (final track in videoTracks)
+                            CheckedPopupMenuItem(
+                                value: track,
+                                checked: track.groupIndex ==
+                                        _manualTrack?.groupIndex &&
+                                    track.trackIndex ==
+                                        _manualTrack?.trackIndex,
+                                child: Text(track.bitrate > 0
+                                    ? '${track.label} · ${(track.bitrate / 1000000).toStringAsFixed(1)}Mbps'
+                                    : track.label)),
+                        ],
+                        child: SizedBox(
+                            width: 48,
+                            height: 36,
+                            child: Center(
+                                child: Text(
+                                    _manualTrack?.label ??
+                                        (videoTracks.length == 1
+                                            ? videoTracks.first.label
+                                            : '自动'),
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11)))),
+                      ),
+                    if (!widget.live)
                     PopupMenuButton<double>(
                       tooltip: uiText(context, '倍速'),
                       enabled: ready,
@@ -957,11 +1173,12 @@ class _PlayerPageState extends State<PlayerPage> {
             icon: const Icon(Icons.open_in_new),
             label: const LocalizedText('返回原资源'),
           ),
-        TextButton.icon(
-          onPressed: episode == null ? null : _download,
-          icon: const Icon(Icons.download_outlined),
-          label: const LocalizedText('下载剧集'),
-        ),
+        if (!widget.live)
+          TextButton.icon(
+            onPressed: episode == null ? null : _download,
+            icon: const Icon(Icons.download_outlined),
+            label: const LocalizedText('下载剧集'),
+          ),
         if (episode != null &&
             widget.library.downloadedFile(widget.entry.id, episode!) != null)
           TextButton.icon(

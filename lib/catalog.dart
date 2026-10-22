@@ -375,11 +375,11 @@ int? catalogDate(Object? value) {
 }
 
 String catalogKind(String category) {
-  if (category.contains('漫剧') ||
+  if ((category.contains('漫剧') && !category.contains('动漫')) ||
       (category.toUpperCase().contains('AI') && category.contains('短剧'))) {
-    return 'AI漫剧';
+    return 'AI短剧';
   }
-  if (category.contains('短剧')) return '短剧';
+  if (category.contains('短剧') || category.contains('爽剧')) return '短剧';
   if (category.contains('综艺')) return '综艺';
   if (category == '动画片' || category.endsWith('片') || category == '电影') {
     return '电影';
@@ -519,10 +519,14 @@ class CatalogCategory {
 }
 
 class CatalogListing {
-  const CatalogListing(this.entries, {this.page = 1, this.pageCount = 1});
+  const CatalogListing(this.entries,
+      {this.page = 1, this.pageCount = 1, this.total = 0});
   final List<MediaEntry> entries;
   final int page;
   final int pageCount;
+
+  /// Server-reported category size, or 0 when absent.
+  final int total;
   bool get hasMore => entries.isNotEmpty && page < pageCount;
 
   factory CatalogListing.parse(
@@ -531,8 +535,12 @@ class CatalogListing {
     final pages = value is Map
         ? int.tryParse((value['pagecount'] ?? '').toString()) ?? requestedPage
         : requestedPage;
+    final total = value is Map
+        ? int.tryParse((value['total'] ?? '').toString()) ?? 0
+        : 0;
     return CatalogListing(entries,
         page: requestedPage,
-        pageCount: pages < requestedPage ? requestedPage : pages);
+        pageCount: pages < requestedPage ? requestedPage : pages,
+        total: total);
   }
 }

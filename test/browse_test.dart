@@ -140,7 +140,7 @@ void main() {
     await controller.refresh();
     expect(controller.categoryFor('电视剧')?.id, '10');
     expect(controller.categoryFor('热门短剧')?.id, '30');
-    expect(controller.categoryFor('AI漫剧'), isNull);
+    expect(controller.categoryFor('AI短剧'), isNull);
     await controller.ensureLabel('电影');
     await controller.load('20', more: true);
     expect(controller.feeds['20']!.listing!.entries.length, 2);

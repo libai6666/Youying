@@ -166,16 +166,22 @@ class OfflineDownloads extends ChangeNotifier {
   }
 
   Future<void> enqueue(MediaEntry entry, Iterable<Episode> episodes,
-      {Map<String, String> headers = const {}}) async {
+      {Map<String, String> headers = const {},
+      Map<String, String> downloadUrls = const {}}) async {
     await initialize();
     if (!available) throw const FormatException('离线下载服务不可用；原生功能更新后请重新安装调试包');
     parseHeaders(jsonEncode(headers));
+    final mediaPath = RegExp(r'\.(m3u8|mp4|webm)$', caseSensitive: false);
     final unique = <String, Episode>{};
     for (final episode in episodes) {
       final uri = SourceEndpoint.parseHttps(episode.url);
-      if (!RegExp(r'\.(m3u8|mp4|webm)$', caseSensitive: false)
-          .hasMatch(uri.path)) {
+      if (!mediaPath.hasMatch(uri.path)) {
         throw const FormatException('当前支持 MP4、WebM 与 HLS 点播下载');
+      }
+      final override = downloadUrls[episode.url];
+      if (override != null &&
+          !mediaPath.hasMatch(SourceEndpoint.parseHttps(override).path)) {
+        throw const FormatException('下载地址格式无效');
       }
       if (find(entry.id, episode) == null) unique[episode.url] = episode;
     }
@@ -187,6 +193,7 @@ class OfflineDownloads extends ChangeNotifier {
             'entry': jsonEncode(entry.toJson()),
             'episodeName': episode.name,
             'url': episode.url,
+            'downloadUrl': downloadUrls[episode.url],
             'headers': headers,
           }
       ]
@@ -195,6 +202,9 @@ class OfflineDownloads extends ChangeNotifier {
 
   Future<void> action(String method, DownloadTask task) =>
       methods.invokeMethod<void>(method, {'id': task.id});
+
+  Future<void> pauseAll() => methods.invokeMethod<void>('pauseAll');
+  Future<void> resumeAll() => methods.invokeMethod<void>('resumeAll');
 
   Future<void> setParallelism(int value) async {
     if (value < 1 || value > 10) throw const FormatException('并发数必须为 1～10');

@@ -290,11 +290,11 @@ class _SearchInputState extends State<_SearchInput> {
         FocusScope.of(context).focusedChild != null) {
       return false;
     }
-    // Let the current key finish its dispatch first, then pull focus.
+    // Decide "nothing was focused" now — the same key's traversal will
+    // land focus somewhere arbitrary this frame, and the field should
+    // still win as the page's primary element.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && FocusScope.of(context).focusedChild == null) {
-        _node.requestFocus();
-      }
+      if (mounted) _node.requestFocus();
     });
     return false;
   }

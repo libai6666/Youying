@@ -1058,14 +1058,10 @@ class _PlayerPageState extends State<PlayerPage> {
                                 fontSize: 12, color: Colors.white)))),
                 if (lines.length > 1)
                   _MenuFocus(
-                    child: PopupMenuButton<String>(
-                      tooltip: uiText(context, '切换线路'),
+                    child: _overlayMenuTrigger(
+                      tooltip: '切换线路',
                       enabled: !selecting,
-                      onSelected: _changeLine,
-                      itemBuilder: (_) => [
-                        for (final name in lines.keys)
-                          PopupMenuItem(value: name, child: Text(name))
-                      ],
+                      onOpen: _openLineMenu,
                       child: const SizedBox(
                           width: 36,
                           height: 36,
@@ -1079,18 +1075,28 @@ class _PlayerPageState extends State<PlayerPage> {
                     '选集',
                     Icons.video_library_outlined,
                     ready && !selecting && line != null
-                        ? () => unawaited(_showAllEpisodes())
+                        ? () =>
+                            unawaited(_withControlsPinned(_showAllEpisodes))
                         : null),
                 if (widget.onChooseSource != null)
                   _overlayButton('换源', Icons.movie_filter_outlined,
-                      () => unawaited(_chooseSource())),
-                _overlayButton('投屏', Icons.cast_outlined,
-                    episode == null ? null : () => unawaited(_showCastPicker())),
+                      () => unawaited(_withControlsPinned(_chooseSource))),
+                _overlayButton(
+                    '投屏',
+                    Icons.cast_outlined,
+                    episode == null
+                        ? null
+                        : () =>
+                            unawaited(_withControlsPinned(_showCastPicker))),
                 // Portrait keeps its dedicated 下载剧集 row below the video;
                 // the overlay button only exists for fullscreen.
                 if (fullscreen)
-                  _overlayButton('下载剧集', Icons.download_outlined,
-                      episode == null || widget.live ? null : _download),
+                  _overlayButton(
+                      '下载剧集',
+                      Icons.download_outlined,
+                      episode == null || widget.live
+                          ? null
+                          : () => unawaited(_withControlsPinned(_download))),
                 AnimatedBuilder(
                     animation: widget.library,
                     builder: (_, __) => _overlayButton(
@@ -1101,7 +1107,7 @@ class _PlayerPageState extends State<PlayerPage> {
                         () => widget.library.toggleFavorite(widget.entry))),
                 if (widget.onShowDetails != null)
                   _overlayButton('详情介绍', Icons.info_outline,
-                      () => unawaited(_showDetails())),
+                      () => unawaited(_withControlsPinned(_showDetails))),
               ]),
             ))),
           ),
@@ -1139,7 +1145,11 @@ class _PlayerPageState extends State<PlayerPage> {
                           trackHeight: 2,
                           thumbShape: const RoundSliderThumbShape(
                               enabledThumbRadius: 5)),
-                      child: Slider(
+                      child: ExcludeFocus(
+                          // Seeking is a surface-mode ←→ job; a focusable
+                          // slider spanning the row would swallow ↑ before
+                          // it reaches the top bar. Touch drag unaffected.
+                          child: Slider(
                         value: progress
                             .clamp(0, durationMs > 0 ? durationMs : 1)
                             .toDouble(),
@@ -1159,6 +1169,7 @@ class _PlayerPageState extends State<PlayerPage> {
                               },
                       ),
                     ),
+                  ),
                   ),
                   Row(children: [
                     _overlayButton(
@@ -1216,27 +1227,10 @@ class _PlayerPageState extends State<PlayerPage> {
                             : null),
                     if (videoTracks.isNotEmpty)
                       _MenuFocus(
-                      child: PopupMenuButton<Object?>(
-                        tooltip: uiText(context, '清晰度'),
+                      child: _overlayMenuTrigger(
+                        tooltip: '清晰度',
                         enabled: ready && !selecting,
-                        onSelected: (value) => unawaited(
-                            _changeQuality(value is VideoTrack ? value : null)),
-                        itemBuilder: (_) => [
-                          CheckedPopupMenuItem(
-                              value: 'auto',
-                              checked: _manualTrack == null,
-                              child: const LocalizedText('自动')),
-                          for (final track in videoTracks)
-                            CheckedPopupMenuItem(
-                                value: track,
-                                checked: track.groupIndex ==
-                                        _manualTrack?.groupIndex &&
-                                    track.trackIndex ==
-                                        _manualTrack?.trackIndex,
-                                child: Text(track.bitrate > 0
-                                    ? '${track.label} · ${(track.bitrate / 1000000).toStringAsFixed(1)}Mbps'
-                                    : track.label)),
-                        ],
+                        onOpen: _openQualityMenu,
                         child: SizedBox(
                             width: 48,
                             height: 36,
@@ -1252,16 +1246,10 @@ class _PlayerPageState extends State<PlayerPage> {
                       )),
                     if (!widget.live)
                     _MenuFocus(
-                    child: PopupMenuButton<double>(
-                      tooltip: uiText(context, '倍速'),
+                    child: _overlayMenuTrigger(
+                      tooltip: '倍速',
                       enabled: ready,
-                      initialValue: rate,
-                      onSelected: (value) => unawaited(_changeRate(value)),
-                      itemBuilder: (_) => [
-                        for (final value in [0.5, 1.0, 1.25, 1.5, 2.0, 3.0])
-                          PopupMenuItem(
-                              value: value, child: LocalizedText('${value}x')),
-                      ],
+                      onOpen: _openRateMenu,
                       child: SizedBox(
                           width: 42,
                           height: 36,
@@ -1311,11 +1299,119 @@ class _PlayerPageState extends State<PlayerPage> {
     return (10000 + _seekRepeat * 5000).clamp(10000, 60000);
   }
 
+  // Held-arrow volume ramp: a press is exactly one system step; a held key
+  // starts slow (~8 repeats per step), accelerates (~4), then runs every
+  // repeat. Resets on key-up or direction change.
+  int _volumeRepeat = 0;
+  LogicalKeyboardKey? _volumeHeldKey;
+
+  bool _volumeSteps(KeyEvent event, LogicalKeyboardKey key) {
+    if (event is KeyDownEvent || _volumeHeldKey != key) {
+      _volumeRepeat = 0;
+      _volumeHeldKey = key;
+      return true;
+    }
+    _volumeRepeat++;
+    final interval = _volumeRepeat <= 8 ? 8 : (_volumeRepeat <= 24 ? 4 : 1);
+    return _volumeRepeat % interval == 0;
+  }
+
+  /// Pins the controls while a picker stays open — the five-second
+  /// auto-hide must not pull the overlay down mid-choice.
+  Future<void> _withControlsPinned(Future<void> Function() action) async {
+    _controlsTimer?.cancel();
+    try {
+      await action();
+    } finally {
+      if (mounted && _controlsVisible) _showControls();
+    }
+  }
+
+  /// Positions [showMenu] on the pressed button — replicates what
+  /// PopupMenuButton does internally so the menu looks identical.
+  Future<T?> _showOverlayMenu<T>(
+      BuildContext buttonContext, List<PopupMenuEntry<T>> items,
+      {T? initialValue}) {
+    final overlay =
+        Overlay.of(buttonContext).context.findRenderObject()! as RenderBox;
+    final button = buttonContext.findRenderObject()! as RenderBox;
+    final origin = Rect.fromPoints(
+        button.localToGlobal(Offset.zero, ancestor: overlay),
+        button.localToGlobal(button.size.bottomRight(Offset.zero),
+            ancestor: overlay));
+    return showMenu<T>(
+        context: context,
+        position: RelativeRect.fromRect(origin, Offset.zero & overlay.size),
+        initialValue: initialValue,
+        items: items);
+  }
+
+  Future<void> _openLineMenu(BuildContext buttonContext) =>
+      _withControlsPinned(() async {
+        final value = await _showOverlayMenu<String>(buttonContext, [
+          for (final name in widget.entry.lines.keys)
+            CheckedPopupMenuItem(
+                value: name, checked: name == line, child: Text(name)),
+        ], initialValue: line);
+        if (value != null) _changeLine(value);
+      });
+
+  Future<void> _openQualityMenu(BuildContext buttonContext) =>
+      _withControlsPinned(() async {
+        final value = await _showOverlayMenu<Object?>(buttonContext, [
+          CheckedPopupMenuItem<Object?>(
+              value: 'auto',
+              checked: _manualTrack == null,
+              child: const LocalizedText('自动')),
+          for (final track in videoTracks)
+            CheckedPopupMenuItem<Object?>(
+                value: track,
+                checked: track.groupIndex == _manualTrack?.groupIndex &&
+                    track.trackIndex == _manualTrack?.trackIndex,
+                child: Text(track.bitrate > 0
+                    ? '${track.label} · ${(track.bitrate / 1000000).toStringAsFixed(1)}Mbps'
+                    : track.label)),
+        ], initialValue: _manualTrack ?? 'auto');
+        if (value != null) {
+          await _changeQuality(value is VideoTrack ? value : null);
+        }
+      });
+
+  Future<void> _openRateMenu(BuildContext buttonContext) =>
+      _withControlsPinned(() async {
+        final value = await _showOverlayMenu<double>(buttonContext, [
+          for (final v in const [0.5, 1.0, 1.25, 1.5, 2.0, 3.0])
+            CheckedPopupMenuItem(
+                value: v, checked: v == rate, child: LocalizedText('${v}x')),
+        ], initialValue: rate);
+        if (value != null) await _changeRate(value);
+      });
+
+  /// Trigger button for overlay menus: OK/tap opens the menu via [onOpen]
+  /// with the button's own context so the popup can position itself.
+  Widget _overlayMenuTrigger({
+    required String tooltip,
+    required bool enabled,
+    required Future<void> Function(BuildContext) onOpen,
+    required Widget child,
+  }) =>
+      Builder(
+          builder: (buttonContext) => Tooltip(
+              message: uiText(buttonContext, tooltip),
+              child: InkWell(
+                  onTap:
+                      enabled ? () => unawaited(onOpen(buttonContext)) : null,
+                  child: child)));
+
   KeyEventResult _onSurfaceKey(KeyEvent event, {required bool fullscreen}) {
     if (event is KeyUpEvent) {
       if (event.logicalKey == _seekHeldKey) {
         _seekRepeat = 0;
         _seekHeldKey = null;
+      }
+      if (event.logicalKey == _volumeHeldKey) {
+        _volumeRepeat = 0;
+        _volumeHeldKey = null;
       }
       return KeyEventResult.ignored;
     }
@@ -1366,8 +1462,10 @@ class _PlayerPageState extends State<PlayerPage> {
     }
     if (key == LogicalKeyboardKey.arrowUp ||
         key == LogicalKeyboardKey.arrowDown) {
-      unawaited(MediaController.adjustVolume(
-          key == LogicalKeyboardKey.arrowUp ? 1 : -1));
+      if (_volumeSteps(event, key)) {
+        unawaited(MediaController.adjustVolume(
+            key == LogicalKeyboardKey.arrowUp ? 1 : -1));
+      }
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;

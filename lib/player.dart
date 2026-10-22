@@ -927,6 +927,9 @@ class _PlayerPageState extends State<PlayerPage> {
           {FocusNode? focusNode}) =>
       IconButton(
         focusNode: focusNode,
+        // Strong fill so the focused overlay button is unmistakable on
+        // the dark control bar (the default 40% tint is nearly invisible).
+        focusColor: const Color(0xE6FF7A00),
         tooltip: uiText(context, tooltip),
         icon: Icon(icon,
             size: 21, color: onPressed == null ? Colors.white38 : Colors.white),
@@ -1278,7 +1281,30 @@ class _PlayerPageState extends State<PlayerPage> {
   ///   channels), up/down adjust system volume, OK toggles play/pause.
   /// - Fullscreen with the overlay visible: every key is ignored so the
   ///   overlay buttons receive traversal and activation themselves.
+  // Held-arrow seek acceleration: the first press steps 10s, each repeat
+  // steps further (15s, 20s, ... capped at 60s) so long videos stay
+  // navigable. Resets on key-up, direction change, or entering button mode.
+  int _seekRepeat = 0;
+  LogicalKeyboardKey? _seekHeldKey;
+
+  int _seekStepFor(KeyEvent event, LogicalKeyboardKey key) {
+    if (event is KeyDownEvent || _seekHeldKey != key) {
+      _seekRepeat = 0;
+      _seekHeldKey = key;
+      return 10000;
+    }
+    _seekRepeat++;
+    return (10000 + _seekRepeat * 5000).clamp(10000, 60000);
+  }
+
   KeyEventResult _onSurfaceKey(KeyEvent event, {required bool fullscreen}) {
+    if (event is KeyUpEvent) {
+      if (event.logicalKey == _seekHeldKey) {
+        _seekRepeat = 0;
+        _seekHeldKey = null;
+      }
+      return KeyEventResult.ignored;
+    }
     // KeyRepeatEvent enables held-arrow continuous seek/volume; confirm
     // keys intentionally only react to the initial KeyDownEvent.
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
@@ -1318,8 +1344,9 @@ class _PlayerPageState extends State<PlayerPage> {
       if (widget.live) {
         if (ready && !selecting) _switchChannel(delta);
       } else if (ready && durationMs > 0) {
+        final step = _seekStepFor(event, key);
         unawaited(_seek(
-            (positionMs + delta * 10000).clamp(0, durationMs).toInt()));
+            (positionMs + delta * step).clamp(0, durationMs).toInt()));
       }
       return KeyEventResult.handled;
     }

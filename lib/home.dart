@@ -157,6 +157,9 @@ class _HomePageState extends State<HomePage> {
                 color: Colors.white.withValues(alpha: 0.72),
                 borderRadius: BorderRadius.circular(24),
                 child: InkWell(
+                  // Default D-pad landing spot on launch — the page's
+                  // primary action; invisible to touch users.
+                  autofocus: true,
                   onTap: _search,
                   borderRadius: BorderRadius.circular(24),
                   child: const Padding(
@@ -589,9 +592,6 @@ class _HomePageState extends State<HomePage> {
         child: Row(children: [
           for (final label in labels)
             TextButton(
-                // Gives TVs a sane starting focus for D-pad traversal;
-                // invisible on touch devices (touch highlight mode).
-                autofocus: label == labels.first,
                 onPressed: () => onTap(label),
                 style: TextButton.styleFrom(
                   minimumSize: const Size(0, 36),

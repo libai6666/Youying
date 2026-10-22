@@ -589,6 +589,9 @@ class _HomePageState extends State<HomePage> {
         child: Row(children: [
           for (final label in labels)
             TextButton(
+                // Gives TVs a sane starting focus for D-pad traversal;
+                // invisible on touch devices (touch highlight mode).
+                autofocus: label == labels.first,
                 onPressed: () => onTap(label),
                 style: TextButton.styleFrom(
                   minimumSize: const Size(0, 36),

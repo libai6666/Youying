@@ -1244,11 +1244,16 @@ class _PlayerPageState extends State<PlayerPage> {
   /// - Fullscreen with the overlay visible: every key is ignored so the
   ///   overlay buttons receive traversal and activation themselves.
   KeyEventResult _onSurfaceKey(KeyEvent event, {required bool fullscreen}) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    // KeyRepeatEvent enables held-arrow continuous seek/volume; confirm
+    // keys intentionally only react to the initial KeyDownEvent.
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
     final key = event.logicalKey;
-    final confirm = key == LogicalKeyboardKey.select ||
-        key == LogicalKeyboardKey.enter ||
-        key == LogicalKeyboardKey.numpadEnter;
+    final confirm = (key == LogicalKeyboardKey.select ||
+            key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.numpadEnter) &&
+        event is KeyDownEvent;
     if (!fullscreen) {
       if (confirm) {
         unawaited(_enterFullscreen());

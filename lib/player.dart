@@ -237,7 +237,11 @@ class _PlayerPageState extends State<PlayerPage> {
   int? _scrubMs;
   List<VideoTrack> videoTracks = const [];
   VideoTrack? _manualTrack;
+  // Separate nodes per surface: the embedded and fullscreen players are
+  // both alive during fullscreen, and a shared node attaches to whichever
+  // widget built last — focus could land on the offstage embedded copy.
   final FocusNode _surfaceFocus = FocusNode(debugLabel: 'video-surface');
+  final FocusNode _embeddedFocus = FocusNode(debugLabel: 'embedded-surface');
   final FocusNode _playFocus = FocusNode(debugLabel: 'play-button');
 
   void _refresh() {
@@ -713,6 +717,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (_fullscreen) playerFullscreenViewport.value = false;
     subscription?.cancel();
     _surfaceFocus.dispose();
+    _embeddedFocus.dispose();
     _playFocus.dispose();
     if (ready) {
       unawaited(_saveProgress());
@@ -896,7 +901,7 @@ class _PlayerPageState extends State<PlayerPage> {
       // Returning from fullscreen should land the remote back on the video
       // so another OK press re-enters it without re-navigating the page.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _surfaceFocus.requestFocus();
+        if (mounted) _embeddedFocus.requestFocus();
       });
     }
   }
@@ -935,7 +940,7 @@ class _PlayerPageState extends State<PlayerPage> {
     final next = nextEpisodeOnLine(lines, line, episode);
     final progress = _scrubMs ?? positionMs;
     return _SurfaceFocus(
-        node: _surfaceFocus,
+        node: fullscreen ? _surfaceFocus : _embeddedFocus,
         // Always grab initial focus: gives TVs a D-pad starting point on
         // the detail page and on entering fullscreen; invisible on touch.
         autofocus: true,
@@ -1008,6 +1013,8 @@ class _PlayerPageState extends State<PlayerPage> {
             child: Focus(
               // Above the top bar there is nothing — ↑ returns focus to the
               // video so arrows resume seek/volume instead of dead-ending.
+              // canRequestFocus keeps the wrapper itself out of traversal.
+              canRequestFocus: false,
               onKeyEvent: (node, event) {
                 if (event is KeyDownEvent &&
                     event.logicalKey == LogicalKeyboardKey.arrowUp) {
@@ -1092,6 +1099,7 @@ class _PlayerPageState extends State<PlayerPage> {
             child: Focus(
               // Below the bottom controls there is nothing — ↓ returns focus
               // to the video so arrows resume seek/volume.
+              canRequestFocus: false,
               onKeyEvent: (node, event) {
                 if (event is KeyDownEvent &&
                     event.logicalKey == LogicalKeyboardKey.arrowDown) {
@@ -1158,7 +1166,7 @@ class _PlayerPageState extends State<PlayerPage> {
                         playing ? '暂停' : (_completed ? '重播' : '播放'),
                         playing ? Icons.pause : Icons.play_arrow,
                         ready ? () => unawaited(_togglePlayback()) : null,
-                        focusNode: _playFocus),
+                        focusNode: fullscreen ? _playFocus : null),
                     Expanded(
                         child: FittedBox(
                             fit: BoxFit.scaleDown,
@@ -1289,10 +1297,9 @@ class _PlayerPageState extends State<PlayerPage> {
       return KeyEventResult.ignored;
     }
     // Yield to traversal only while an overlay button actually holds
-    // focus. If the surface still has it (e.g. controls popped during a
-    // remote seek), arrows keep seeking/adjusting volume until the
-    // overlay auto-hides or the user wakes a button via Back.
-    if (_controlsVisible && !_surfaceFocus.hasFocus) {
+    // primary focus — buttons are descendants of the surface node, so
+    // hasFocus alone can't tell the two modes apart.
+    if (_controlsVisible && !_surfaceFocus.hasPrimaryFocus) {
       return KeyEventResult.ignored;
     }
     if (confirm) {
@@ -1689,7 +1696,8 @@ class _FullscreenPlayer extends StatelessWidget {
       animation: Listenable.merge(
           [player._repaintFullscreen, player._surfaceFocus]),
       builder: (context, _) => PopScope(
-          canPop: player._controlsVisible && player._surfaceFocus.hasFocus,
+          canPop:
+              player._controlsVisible && player._surfaceFocus.hasPrimaryFocus,
           onPopInvokedWithResult: (didPop, _) {
             if (didPop) return;
             if (player._controlsVisible) {
@@ -1730,7 +1738,7 @@ class _SurfaceFocus extends StatelessWidget {
           builder: (context, child) => DecoratedBox(
               decoration: BoxDecoration(
                   border: Border.all(
-                      color: node.hasFocus
+                      color: node.hasPrimaryFocus
                           ? const Color(0xFFFF7A00)
                           : Colors.transparent,
                       width: 2.5)),

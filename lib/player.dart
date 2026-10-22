@@ -128,6 +128,23 @@ class MediaController {
       });
   Future<void> dispose() => call('dispose');
 
+  /// True on Android TV / leanback devices. Used to gate TV-only behavior
+  /// (e.g. stealing focus on page entry) without a repeated channel call.
+  static final Future<bool> isTelevision = _detectTelevision();
+
+  static Future<bool> _detectTelevision() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return false;
+    }
+    try {
+      return await methods
+              .invokeMethod<bool>('isTv', {'playerId': 0}) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// System media volume for remote volume keys. Global (no playerId).
   static Future<void> adjustVolume(int direction) {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {

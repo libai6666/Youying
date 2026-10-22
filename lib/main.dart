@@ -239,7 +239,7 @@ class _SearchPageState extends State<SearchPage> {
           ));
 }
 
-class _SearchInput extends StatelessWidget {
+class _SearchInput extends StatefulWidget {
   const _SearchInput(
       {required this.controller,
       required this.enabled,
@@ -249,8 +249,31 @@ class _SearchInput extends StatelessWidget {
   final VoidCallback onSearch;
 
   @override
+  State<_SearchInput> createState() => _SearchInputState();
+}
+
+class _SearchInputState extends State<_SearchInput> {
+  final FocusNode _node = FocusNode(debugLabel: 'search-input');
+
+  @override
+  void initState() {
+    super.initState();
+    // TVs get an initial D-pad focus on the field; phones must not, or
+    // the soft keyboard would pop up uninvited.
+    unawaited(MediaController.isTelevision.then((tv) {
+      if (tv && mounted) _node.requestFocus();
+    }));
+  }
+
+  @override
+  void dispose() {
+    _node.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) => AnimatedBuilder(
-      animation: controller,
+      animation: widget.controller,
       builder: (context, _) => Row(children: [
             Expanded(
               // Up/down on a remote leaves the field for traversal; a text
@@ -270,19 +293,19 @@ class _SearchInput extends StatelessWidget {
                   return KeyEventResult.ignored;
                 },
                 child: TextField(
-                autofocus: true,
-                controller: controller,
-                onSubmitted: (_) => onSearch(),
+                focusNode: _node,
+                controller: widget.controller,
+                onSubmitted: (_) => widget.onSearch(),
                 textInputAction: TextInputAction.search,
                 decoration: InputDecoration(
                   hintText: uiText(context, '搜索影片、电视剧、动漫'),
                   prefixIcon: const Icon(Icons.search, size: 20),
-                  suffixIcon: controller.text.isEmpty
+                  suffixIcon: widget.controller.text.isEmpty
                       ? null
                       : IconButton(
                           tooltip: uiText(context, '清空'),
                           icon: const Icon(Icons.close, size: 18),
-                          onPressed: controller.clear),
+                          onPressed: widget.controller.clear),
                   isDense: true,
                   filled: true,
                   fillColor: const Color(0xfff6f7f8),
@@ -296,8 +319,9 @@ class _SearchInput extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             TextButton(
-                onPressed: enabled && controller.text.trim().isNotEmpty
-                    ? onSearch
+                onPressed: widget.enabled &&
+                        widget.controller.text.trim().isNotEmpty
+                    ? widget.onSearch
                     : null,
                 child: const LocalizedText('搜索')),
           ]));

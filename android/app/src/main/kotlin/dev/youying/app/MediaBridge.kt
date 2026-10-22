@@ -1,6 +1,7 @@
 package dev.youying.app
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Handler
@@ -145,6 +146,11 @@ class MediaBridge(
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         try {
             val data = call.arguments as? Map<*, *> ?: throw IllegalArgumentException("arguments required")
+            if (call.method == "isTv") {
+                result.success(context.packageManager
+                    .hasSystemFeature(PackageManager.FEATURE_LEANBACK))
+                return
+            }
             if (call.method == "volume") {
                 // Remote volume keys: adjust system media volume with the
                 // native volume UI, independent of any player instance.

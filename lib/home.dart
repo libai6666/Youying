@@ -11,7 +11,7 @@ ThemeData youyingTheme() => ThemeData(
       // Visible focus ring for D-pad navigation on Android TV: every
       // InkWell/chip/button already participates in focus traversal, it only
       // needed a noticeable highlight.
-      focusColor: const Color(0x4dff6500),
+      focusColor: const Color(0x66ff6500),
       useMaterial3: true,
       appBarTheme: const AppBarTheme(
           backgroundColor: _canvas,
@@ -1059,7 +1059,9 @@ class _PosterTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) => InkWell(
       onTap: onTap,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      borderRadius: BorderRadius.circular(7),
+      child: _FocusRing(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         ClipRRect(
             borderRadius: BorderRadius.circular(5),
             child: AspectRatio(
@@ -1092,7 +1094,7 @@ class _PosterTile extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 12)),
-      ]));
+      ])));
 }
 
 class _PosterStrip extends StatelessWidget {
@@ -1149,7 +1151,8 @@ class _SpotlightState extends State<_Spotlight> {
                     final entry = widget.entries[index];
                     return InkWell(
                         onTap: () => widget.onTap(entry),
-                        child: Stack(fit: StackFit.expand, children: [
+                        child: _FocusRing(
+                            child: Stack(fit: StackFit.expand, children: [
                           _SpotlightArtwork(
                               entry: entry, artwork: widget.artwork),
                           const DecoratedBox(
@@ -1172,7 +1175,7 @@ class _SpotlightState extends State<_Spotlight> {
                                       color: Colors.white,
                                       fontWeight: FontWeight.bold,
                                       fontSize: 14))),
-                        ]));
+                        ])));
                   }),
               Positioned(
                   right: 10,
@@ -1245,7 +1248,9 @@ class _CatalogCard extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(compact ? 12 : 10),
-          child: Padding(
+          child: _FocusRing(
+              radius: compact ? 12 : 10,
+              child: Padding(
               padding: EdgeInsets.all(compact ? 10 : 12),
               child:
                   Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1315,7 +1320,7 @@ class _CatalogCard extends StatelessWidget {
                       ],
                     ])),
                 if (trailing != null) trailing!,
-              ])),
+              ]))),
         ),
       );
 }
@@ -1358,4 +1363,28 @@ class _SavedEntries extends StatelessWidget {
                               DetailPage(entry: entry, library: library))));
             });
       });
+}
+
+/// Draws a rounded ring inside a focused InkWell/ListTile — a flat
+/// focusColor tint alone is nearly invisible on poster art when navigating
+/// by remote. Must live *inside* the focusable widget's subtree so
+/// Focus.of() resolves to that widget's focus node.
+class _FocusRing extends StatelessWidget {
+  const _FocusRing({required this.child, this.radius = 7});
+  final Widget child;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    final focused = Focus.of(context).hasFocus;
+    return AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        padding: const EdgeInsets.all(1.5),
+        decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(radius),
+            border: Border.all(
+                width: 2.5,
+                color: focused ? _orange : Colors.transparent)),
+        child: child);
+  }
 }
